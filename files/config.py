@@ -22,9 +22,9 @@ class SystemConfig:
     POTHOLE_MODEL_PATH: str = "files/best_preprocessed_excluded.onnx"  
     
     # Detection thresholds
-    ANOMALY_CONF_THRESHOLD: float = 0.5
-    POTHOLE_CONF_THRESHOLD: float = 0.5
-    HIGH_CONF_SAVE_THRESHOLD: float = 0.75  # Save only the images above this confidence
+    ANOMALY_CONF_THRESHOLD: float = 0.7
+    POTHOLE_CONF_THRESHOLD: float = 0.7
+    HIGH_CONF_SAVE_THRESHOLD: float = 0.75  # Save images above this confidence
     NMS_THRESHOLD: float = 0.45
     
     # Performance settings for RPi5
@@ -65,7 +65,7 @@ class SystemConfig:
             path=self.ANOMALY_MODEL_PATH,
             conf_threshold=self.ANOMALY_CONF_THRESHOLD,
             nms_threshold=self.NMS_THRESHOLD,
-            name="Anomaly"
+            name="Model1"
         )
     
     def get_pothole_config(self) -> ModelConfig:
@@ -74,7 +74,7 @@ class SystemConfig:
             path=self.POTHOLE_MODEL_PATH,
             conf_threshold=self.POTHOLE_CONF_THRESHOLD,
             nms_threshold=self.NMS_THRESHOLD,
-            name="Pothole"
+            name="Model2"
         )
 
 config = SystemConfig()

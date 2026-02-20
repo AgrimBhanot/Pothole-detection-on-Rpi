@@ -91,14 +91,24 @@ class RPi5DetectionSystem:
         print("  's' - Save current frame manually")
         print("-" * 60)
         
-        # Initializing camera
+
         try:
-            self.camera = ThreadedCamera(
-                src=camera_id,
-                width=config.CAMERA_WIDTH,
-                height=config.CAMERA_HEIGHT,
-                fps=config.CAMERA_FPS
-            )
+            if camera_id == 0:
+                # Use our new Picamera2 logic inside ThreadedCamera
+                self.camera = ThreadedCamera(
+                    src="pi_camera", 
+                    width=config.CAMERA_WIDTH,
+                    height=config.CAMERA_HEIGHT,
+                    fps=config.CAMERA_FPS
+                )
+            else:
+                # USB webcam or video file
+                self.camera = ThreadedCamera(
+                    src=camera_id, # Use the actual ID passed
+                    width=config.CAMERA_WIDTH,
+                    height=config.CAMERA_HEIGHT,
+                    fps=config.CAMERA_FPS
+                )
         except Exception as e:
             print(f" Error: Failed to initialize camera: {e}")
             return
