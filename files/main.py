@@ -1,6 +1,5 @@
 """
 Main application for RPi5 Object Detection System
-Optimized for high performance with dual models and multiprocessing
 """
 
 import cv2
@@ -18,14 +17,11 @@ from visualizer import Visualizer, DetectionSaver
 
 class RPi5DetectionSystem:
     """
-    Main detection system for Raspberry Pi 5
     Integrates all components for high-performance object detection
     """
-    
     def __init__(self, use_dual_models: bool = True, save_detections: bool = True):
         """
         Initialize the detection system
-        
         Args:
             use_dual_models: Whether to use alternating dual models
             save_detections: Whether to save high-confidence detections
@@ -37,7 +33,7 @@ class RPi5DetectionSystem:
         self.use_dual_models = use_dual_models
         self.save_detections = save_detections
         
-        # Initialize models
+        # Initializing models
         print("\n[1/5] Loading models...")
         self.detector_anomaly = OptimizedYOLODetector(
             model_config=config.get_anomaly_config(),
@@ -56,7 +52,7 @@ class RPi5DetectionSystem:
         else:
             self.detector_pothole = None
         
-        # Initialize visualizer
+        # Initializing visualizer
         print("\n[2/5] Initializing visualizer...")
         self.visualizer = Visualizer(
             color_anomaly=config.COLOR_ANOMALY,
@@ -65,7 +61,7 @@ class RPi5DetectionSystem:
             show_timestamp=config.SHOW_TIMESTAMPS
         )
         
-        # Initialize saver
+        # Initializing saver
         print("\n[3/5] Initializing detection saver...")
         if save_detections:
             self.saver = DetectionSaver(
@@ -95,7 +91,7 @@ class RPi5DetectionSystem:
         print("  's' - Save current frame manually")
         print("-" * 60)
         
-        # Initialize camera
+        # Initializing camera
         try:
             self.camera = ThreadedCamera(
                 src=camera_id,
@@ -104,7 +100,7 @@ class RPi5DetectionSystem:
                 fps=config.CAMERA_FPS
             )
         except Exception as e:
-            print(f"❌ Error: Failed to initialize camera: {e}")
+            print(f" Error: Failed to initialize camera: {e}")
             return
         
         # Initialize pipeline
@@ -114,10 +110,6 @@ class RPi5DetectionSystem:
         )
         
         # Start pipeline processes
-        # Note: In multiprocessing, we can't directly pass class instances
-        # So we'll use a simplified single-process approach for now
-        # For true multiprocessing, you'd need to use queues with serializable data
-        
         self._run_detection_loop(is_video=False)
     
     def run_video(self, video_path: str):
@@ -134,14 +126,14 @@ class RPi5DetectionSystem:
         print("  's' - Save current frame manually")
         print("-" * 60)
         
-        # Initialize video capture
+        # Initializing video capture
         try:
             self.camera = VideoCapture(video_path=video_path)
         except Exception as e:
-            print(f"❌ Error: Failed to load video: {e}")
+            print(f" Error: Failed to load video: {e}")
             return
         
-        # Initialize pipeline
+        # Initializing pipeline
         self.pipeline = DetectionPipeline(
             max_queue_size=config.FRAME_QUEUE_SIZE,
             max_latency_ms=config.MAX_LATENCY_MS
@@ -149,7 +141,7 @@ class RPi5DetectionSystem:
         
         self._run_detection_loop(is_video=True)
     def _run_detection_loop(self, is_video: bool = False):
-        """Main detection loop (simplified single-process version)
+        """Main detection loop
         Arg: is_video, checking if it is video
         """
         paused = False
@@ -183,7 +175,7 @@ class RPi5DetectionSystem:
                     frame_count += 1
                     timestamp = time.time()
                     
-                    # Select detector
+                    # Selecting detector
                     if self.use_dual_models and config.USE_ALTERNATE_MODELS:
                         detector = self.detector_anomaly if use_model_1 else self.detector_pothole
                     else:
@@ -191,10 +183,10 @@ class RPi5DetectionSystem:
                     
                     model_name = detector.get_name()
                     
-                    # Run detection
+                    # Running detection
                     boxes, scores = detector.detect(frame)
                     
-                    # Store results for persistence
+                    # Storing results for persistence
                     if use_model_1 or not self.use_dual_models:
                         last_boxes_1 = boxes
                         last_scores_1 = scores
@@ -206,16 +198,16 @@ class RPi5DetectionSystem:
                         persistent_boxes = last_boxes_1
                         persistent_scores = last_scores_1
                     
-                    # Combine current and persistent detections
+                    # Combining current and persistent detections
                     combined_boxes = boxes + persistent_boxes
                     combined_scores = scores + persistent_scores
                     
-                    # Draw detections
+                    # Drawing detections
                     result_frame = self.visualizer.draw_detections(
                         frame, combined_boxes, combined_scores, model_name
                     )
                     
-                    # Add overlays
+                    # Adding overlays
                     result_frame = self.visualizer.add_fps_overlay(result_frame, current_fps)
                     result_frame = self.visualizer.add_timestamp_overlay(result_frame, timestamp)
                     result_frame = self.visualizer.add_info_overlay(
@@ -255,16 +247,16 @@ class RPi5DetectionSystem:
                 if is_video and isinstance(self.camera, VideoCapture):
                     progress = self.camera.get_progress()
                     
-                    # Add progress bar to frame (optional)
+                    # To Add progress bar to frame (optional)
                     h, w = result_frame.shape[:2]
                     bar_height = 10
                     bar_filled = int((progress / 100) * w)
                     
-                    # Draw progress bar at bottom
+                    # To Draw progress bar at bottom
                     cv2.rectangle(result_frame, (0, h-bar_height), (w, h), (50, 50, 50), -1)
                     cv2.rectangle(result_frame, (0, h-bar_height), (bar_filled, h), (0, 255, 0), -1)
                     
-                    # Update console print
+                    # To Update console print
                     if fps_frame_count % 30 == 0:
                         print(f"Progress: {progress:.1f}% | FPS: {current_fps:.1f} | "
                             f"Detections: {len(combined_boxes)}")
@@ -282,20 +274,20 @@ class RPi5DetectionSystem:
 
 
                 if key == ord('q'):
-                    print("\n⏹️  Stopped by user")
+                    print("\n  Stopped by user")
                     break
                 elif key == ord('p'):
                     paused = not paused
-                    print(f"{'⏸️  Paused' if paused else '▶️  Resumed'}")
+                    print(f"{'  Paused' if paused else '  Resumed'}")
                 elif key == ord('s'):
                     # Manual save
                     if not paused and 'result_frame' in locals():
                         save_path = f"{config.OUTPUT_DIR}/manual_{frame_count}.jpg"
                         cv2.imwrite(save_path, result_frame)
-                        print(f"💾 Manually saved: {save_path}")
+                        print(f" Manually saved: {save_path}")
                 
         except KeyboardInterrupt:
-            print("\n⏹️  Interrupted by user")
+            print("\n  Interrupted by user")
         
         finally:
             self._cleanup()
@@ -313,14 +305,14 @@ class RPi5DetectionSystem:
         
         cv2.destroyAllWindows()
         
-        print("✓ Cleanup complete")
+        print(" Cleanup complete")
         print("=" * 60)
 
 
 def main():
-    """Main entry point"""
+    """Entry point — parses CLI args and hands off to either run_camera() or run_video()."""
     parser = argparse.ArgumentParser(
-        description='RPi5 Object Detection System - Optimized for high performance',
+        description='RPi5 Object Detection System',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -355,7 +347,7 @@ Examples:
     parser.add_argument(
         '--single-model',
         action='store_true',
-        help='Use only anomaly model (no alternating)'
+        help='For Using only anomaly model for detection '
     )
     
     parser.add_argument(
@@ -367,7 +359,7 @@ Examples:
     parser.add_argument(
         '--conf-threshold',
         type=float,
-        help='Override confidence threshold'
+        help='Overriding confidence threshold'
     )
     
     parser.add_argument(
@@ -378,7 +370,7 @@ Examples:
     
     args = parser.parse_args()
     
-    # Override config if specified
+    # Overriding config if specified
     if args.conf_threshold:
         config.ANOMALY_CONF_THRESHOLD = args.conf_threshold
         config.POTHOLE_CONF_THRESHOLD = args.conf_threshold
@@ -386,24 +378,24 @@ Examples:
     if args.save_threshold:
         config.HIGH_CONF_SAVE_THRESHOLD = args.save_threshold
     
-    # Initialize system
+    # Initializing system
     try:
         system = RPi5DetectionSystem(
             use_dual_models=not args.single_model,
             save_detections=not args.no_save
         )
     except Exception as e:
-        print(f"❌ Error initializing system: {e}")
+        print(f" Error initializing system: {e}")
         sys.exit(1)
     
-    # Run detection
+    # Running detection
     try:
         if args.source.lower() == 'camera':
             system.run_camera(camera_id=args.camera_id)
         else:
             system.run_video(video_path=args.source)
     except Exception as e:
-        print(f"❌ Error during detection: {e}")
+        print(f" Error during detection: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)

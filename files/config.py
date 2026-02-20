@@ -2,11 +2,9 @@
 Configuration file for RPi5 Object Detection System
 Centralized settings for models, performance tuning, and detection parameters
 """
-
 import os
 from dataclasses import dataclass
 from typing import Tuple
-
 @dataclass
 class ModelConfig:
     """Configuration for individual YOLO models"""
@@ -21,24 +19,24 @@ class SystemConfig:
     """System-wide configuration"""
     # Model paths
     ANOMALY_MODEL_PATH: str = "files/new_preprocessed_excluded.onnx"
-    POTHOLE_MODEL_PATH: str = "files/best_preprocessed_excluded.onnx"  # Your second model
+    POTHOLE_MODEL_PATH: str = "files/best_preprocessed_excluded.onnx"  
     
     # Detection thresholds
     ANOMALY_CONF_THRESHOLD: float = 0.5
     POTHOLE_CONF_THRESHOLD: float = 0.5
-    HIGH_CONF_SAVE_THRESHOLD: float = 0.75  # Save images above this confidence
+    HIGH_CONF_SAVE_THRESHOLD: float = 0.75  # Save only the images above this confidence
     NMS_THRESHOLD: float = 0.45
     
     # Performance settings for RPi5
-    INTRA_OP_NUM_THREADS: int = 4  # Pi5 has 4 cores
+    INTRA_OP_NUM_THREADS: int = 4  
     INTER_OP_NUM_THREADS: int = 2
     NUM_WARMUP_RUNS: int = 10
-    VIDEO_PROCESS_ALL_FRAMES: bool = True  # Process every frame in video
+    VIDEO_PROCESS_ALL_FRAMES: bool = True  
     VIDEO_DISPLAY_SPEED: str = "original"
     # Pipeline settings
     FRAME_QUEUE_SIZE: int = 10  # Small queue to minimize latency
     MAX_LATENCY_MS: int = 1000  # Drop frames if latency exceeds this
-    USE_ALTERNATE_MODELS: bool = True  # Alternate between models each frame
+    USE_ALTERNATE_MODELS: bool = True  # Alternate between models each frame for optimisation
     
     # Camera settings
     CAMERA_WIDTH: int = 640
@@ -58,11 +56,11 @@ class SystemConfig:
     COLOR_TEXT: Tuple[int, int, int] = (255, 255, 255)  # White
     
     def __post_init__(self):
-        """Create output directory if it doesn't exist"""
+        """Creates output directory if it doesn't exist"""
         os.makedirs(self.OUTPUT_DIR, exist_ok=True)
         
     def get_anomaly_config(self) -> ModelConfig:
-        """Get configuration for anomaly detection model"""
+        """Getting configuration for anomaly detection model"""
         return ModelConfig(
             path=self.ANOMALY_MODEL_PATH,
             conf_threshold=self.ANOMALY_CONF_THRESHOLD,
@@ -71,7 +69,7 @@ class SystemConfig:
         )
     
     def get_pothole_config(self) -> ModelConfig:
-        """Get configuration for pothole detection model"""
+        """Getting configuration for pothole detection model"""
         return ModelConfig(
             path=self.POTHOLE_MODEL_PATH,
             conf_threshold=self.POTHOLE_CONF_THRESHOLD,
@@ -79,5 +77,4 @@ class SystemConfig:
             name="Pothole"
         )
 
-# Global configuration instance
 config = SystemConfig()

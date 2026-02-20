@@ -2,25 +2,16 @@
 Performance monitoring utility for RPi5 Object Detection System
 Tracks CPU, memory, temperature, and inference time
 """
-
 import time
 import psutil
 import os
 from typing import Dict, List, Optional
 from collections import deque
 import threading
-
-
 class PerformanceMonitor:
-    """
-    Monitor system performance metrics
-    Tracks FPS, CPU, memory, temperature, and inference time
-    """
-    
     def __init__(self, window_size: int = 30):
         """
-        Initialize performance monitor
-        
+        Initializig performance monitor
         Args:
             window_size: Number of samples to keep for averaging
         """
@@ -40,26 +31,24 @@ class PerformanceMonitor:
         # Temperature monitoring (RPi specific)
         self.temp_file = "/sys/class/thermal/thermal_zone0/temp"
         self.has_temp_sensor = os.path.exists(self.temp_file)
-        
-        print("✓ Performance monitor initialized")
+        print(" Performance monitor initialized")
     
     def update_fps(self, fps: float):
-        """Update FPS metric"""
+        """Updating FPS metric"""
         self.fps_buffer.append(fps)
     
     def update_inference_time(self, inference_time_ms: float):
-        """Update inference time metric"""
+        """Updating inference time metric"""
         self.inference_time_buffer.append(inference_time_ms)
     
     def update_system_metrics(self):
-        """Update CPU and memory metrics"""
+        """Updating CPU and memory metrics"""
         self.cpu_buffer.append(psutil.cpu_percent(interval=0.1))
         self.memory_buffer.append(psutil.virtual_memory().percent)
     
     def get_temperature(self) -> Optional[float]:
         """
-        Get CPU temperature (RPi5 specific)
-        
+        To Get CPU temperature
         Returns:
             Temperature in Celsius or None if not available
         """
@@ -75,8 +64,7 @@ class PerformanceMonitor:
     
     def get_throttled_status(self) -> Optional[str]:
         """
-        Check if RPi is throttled
-        
+        Checking if RPi is throttled
         Returns:
             Throttling status string or None
         """
@@ -91,7 +79,7 @@ class PerformanceMonitor:
             
             if result.returncode == 0:
                 throttled = result.stdout.strip()
-                # Parse throttled value
+                # Parsing throttled value
                 if 'throttled=0x0' in throttled:
                     return "OK"
                 else:
@@ -102,8 +90,7 @@ class PerformanceMonitor:
     
     def get_stats(self) -> Dict[str, float]:
         """
-        Get current statistics
-        
+        To Get current statistics
         Returns:
             Dictionary of performance metrics
         """
@@ -214,7 +201,6 @@ class PerformanceMonitor:
     def save_report(self, filepath: str = "performance_report.txt"):
         """
         Save performance report to file
-        
         Args:
             filepath: Path to save report
         """
@@ -232,7 +218,7 @@ class PerformanceMonitor:
             
             f.write("\n" + "=" * 60 + "\n")
         
-        print(f"✓ Performance report saved: {filepath}")
+        print(f" Performance report saved: {filepath}")
 
 
 class BackgroundMonitor:
@@ -243,7 +229,6 @@ class BackgroundMonitor:
     def __init__(self, monitor: PerformanceMonitor, interval: float = 1.0):
         """
         Initialize background monitor
-        
         Args:
             monitor: PerformanceMonitor instance
             interval: Update interval in seconds
@@ -258,14 +243,14 @@ class BackgroundMonitor:
         self.running = True
         self.thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self.thread.start()
-        print("✓ Background monitoring started")
+        print("Background monitoring started")
     
     def stop(self):
         """Stop background monitoring"""
         self.running = False
         if self.thread:
             self.thread.join(timeout=2.0)
-        print("✓ Background monitoring stopped")
+        print("Background monitoring stopped")
     
     def _monitor_loop(self):
         """Background monitoring loop"""

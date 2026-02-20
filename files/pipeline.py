@@ -2,7 +2,6 @@
 Multiprocessing pipeline for async detection
 Separates capture, inference, and display into parallel processes
 """
-
 import multiprocessing as mp
 import time
 import numpy as np
@@ -30,20 +29,17 @@ class FrameData:
 
 class DetectionPipeline:
     """
-    Multiprocessing pipeline for object detection
-    
+    The Multiprocessing pipeline for object detection is as follows:
     Architecture:
     - Process A: Capture frames (camera/video)
     - Process B: Run inference (alternating models)
     - Process C: Display and save results
-    
     This eliminates serial bottlenecks and maximizes throughput
     """
     
     def __init__(self, max_queue_size: int = 2, max_latency_ms: int = 200):
         """
         Initialize the pipeline
-        
         Args:
             max_queue_size: Maximum frames in queue (small = low latency)
             max_latency_ms: Drop frames if latency exceeds this
@@ -59,7 +55,7 @@ class DetectionPipeline:
         # Performance tracking
         self.max_latency_ms = max_latency_ms
         
-        print("✓ Detection pipeline initialized")
+        print(" Detection pipeline initialized")
     
     def start_capture_process(self, camera, target_fps: Optional[int] = None):
         """
@@ -98,17 +94,15 @@ class DetectionPipeline:
                     timestamp=current_time
                 )
                 
-                # Put in queue (non-blocking to check latency)
                 try:
-                    # For video, WAIT for queue space (don't drop frames)
-                    # For camera, drop frames if queue is full
-                    if target_fps is None:  # Indicates video mode
+                   
+                    if target_fps is None:  
                         self.capture_queue.put(frame_data, block=True, timeout=1.0)
-                    else:  # Camera mode
+                    else:  
                         self.capture_queue.put(frame_data, block=False)
                     last_time = current_time
                 except:
-                    # Only happens in camera mode or timeout
+                    
                     pass
         
         process = mp.Process(target=capture_worker, daemon=True)
@@ -126,10 +120,8 @@ class DetectionPipeline:
         """
         def inference_worker():
             """Worker that runs detection and puts results in queue"""
-            # Track which model to use
             use_model_1 = True
             
-            # Persistence for boxes (to prevent flickering)
             last_boxes_1 = []
             last_scores_1 = []
             last_boxes_2 = []
@@ -137,18 +129,14 @@ class DetectionPipeline:
             
             while self.running.value:
                 try:
-                    # Get frame from queue (with timeout)
                     frame_data = self.capture_queue.get(timeout=0.1)
                 except:
                     continue
                 
-                # Check latency
-                if use_latency_check:  # Will be False for video
+                if use_latency_check:  
                     latency_ms = (time.time() - frame_data.timestamp) * 1000
                     if latency_ms > self.max_latency_ms:
                         continue
-                
-                # Select detector
                 if use_alternate:
                     detector = detector1 if use_model_1 else detector2
                     model_name = detector.get_name()
@@ -156,28 +144,23 @@ class DetectionPipeline:
                     detector = detector1
                     model_name = detector.get_name()
                 
-                # Run detection
                 boxes, scores = detector.detect(frame_data.frame)
                 
-                # Store results for persistence
                 if use_model_1:
                     last_boxes_1 = boxes
                     last_scores_1 = scores
-                    # Use previous model 2 detections for continuity
                     persistent_boxes = last_boxes_2
                     persistent_scores = last_scores_2
                 else:
                     last_boxes_2 = boxes
                     last_scores_2 = scores
-                    # Use previous model 1 detections for continuity
+                    
                     persistent_boxes = last_boxes_1
                     persistent_scores = last_scores_1
                 
-                # Combine current and persistent detections
                 combined_boxes = boxes + persistent_boxes
                 combined_scores = scores + persistent_scores
                 
-                # Create result
                 result = DetectionResult(
                     frame=frame_data.frame,
                     boxes=combined_boxes,
@@ -191,14 +174,12 @@ class DetectionPipeline:
                 try:
                     self.detection_queue.put(result, block=False)
                 except:
-                    # Queue full, drop oldest result
                     try:
                         self.detection_queue.get_nowait()
                         self.detection_queue.put(result, block=False)
                     except:
                         pass
                 
-                # Alternate models
                 if use_alternate:
                     use_model_1 = not use_model_1
         
@@ -225,7 +206,6 @@ class DetectionPipeline:
         """Stop all processes"""
         self.running.value = 0
         
-        # Clear queues
         while not self.capture_queue.empty():
             try:
                 self.capture_queue.get_nowait()
@@ -238,7 +218,7 @@ class DetectionPipeline:
             except:
                 break
         
-        print("✓ Pipeline stopped")
+        print(" Pipeline stopped")
     
     def get_queue_sizes(self) -> Tuple[int, int]:
         """
