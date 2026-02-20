@@ -16,7 +16,7 @@ Dual-model system with multiprocessing, zero-copy operations, and advanced optim
   - ONNX Runtime optimizations
   - Model warmup for consistent performance
 - **Threaded Camera Capture**: Prevents buffer lag
-- **Async Detection Saving**: Background thread for high-confidence detections (>0.75)
+- **Async Detection Saving**: Background thread for high-confidence detections saving WITH TIME-STAMPS (>0.75)
 - **Real-time Visualization**:
   - Live FPS display
   - Timestamp overlay
@@ -30,14 +30,31 @@ Dual-model system with multiprocessing, zero-copy operations, and advanced optim
 
 ```
 .
-├── config.py          # Centralized configuration
-├── detector.py        # Optimized YOLO detector class
-├── camera.py          # Threaded camera capture
-├── pipeline.py        # Multiprocessing pipeline (advanced)
-├── visualizer.py      # Drawing and saving utilities
-├── main.py            # Main application
-├── requirements.txt   # Python dependencies
-└── README.md          # This file
+├── new_model/                #Saves all the models
+│   ├── best_preprocessed.onnx
+│   ├── best.onnx
+│   ├── best.pt
+│   ├── Model1_Pothole.onnx    #Main Pothole model in use
+│   └── Model2_General.onnx    #General Model in use
+│
+├── Source/
+│   ├── __pycache__/
+│   ├── camera.py              # Threaded camera capture
+│   ├── config.py              # Centralized configuration
+│   ├── detector.py            # Optimized YOLO detector class
+│   ├── main.py                # Main application
+│   ├── monitor.py             # System/resource monitoring
+│   ├── pipeline.py            # Multiprocessing pipeline (advanced)
+│   ├── test_system.py         # System testing utilities
+│   └── visualizer.py          # Drawing and saving utilities
+│
+├── calibrate_and_excluded_Quantization.py # Quantization to INT8 with exculded layers
+├── image_testing.py           # Image-based testing script
+├── Preprocessing.py           # Model preprocessing before Quantization
+├── .gitignore
+├── README.md
+├── requirements.txt           # Python dependencies
+└── setup.sh                   # Setup script
 ```
 
 ---
@@ -74,11 +91,13 @@ pip install -r requirements.txt
 ### 3. Model Files
 
 Place your ONNX model files in the project directory:
-- `best_preprocessed_excluded.onnx` (Anomaly detection model)
-- `pothole_model.onnx` (Pothole detection model)
+- `Model2_General.onnx` (Anomaly detection model)
+- `Model1_Pothole.onnx` (Pothole detection model)
 
-Update paths in `config.py` if needed.
+Update paths in `Source/config.py` if needed.
 
+### 4. Alternative
+Or just run the setup.sh script.
 ---
 
 ## 🎮 Usage
@@ -87,27 +106,27 @@ Update paths in `config.py` if needed.
 
 **Run with camera (dual models):**
 ```bash
-python main.py --source camera
+python Source/main.py --source camera
 ```
 
 **Run with camera (single model):**
 ```bash
-python main.py --source camera --single-model
+python Source/main.py --source camera --single-model
 ```
 
 **Run with video file:**
 ```bash
-python main.py --source path/to/video.mp4
+python Source/main.py --source path/to/video.mp4
 ```
 
 **Disable automatic saving:**
 ```bash
-python main.py --source camera --no-save
+python Source/main.py --source camera --no-save
 ```
 
 **Custom thresholds:**
 ```bash
-python main.py --source camera --conf-threshold 0.6 --save-threshold 0.8
+python Source/main.py --source camera --conf-threshold 0.6 --save-threshold 0.8
 ```
 
 ### Keyboard Controls
@@ -120,36 +139,16 @@ python main.py --source camera --conf-threshold 0.6 --save-threshold 0.8
 
 ## ⚙️ Configuration
 
-Edit `config.py` to customize:
+Edit `Source/config.py` to customize:
 
 ### Model Settings
 ```python
-ANOMALY_MODEL_PATH = "best_preprocessed_excluded.onnx"
-POTHOLE_MODEL_PATH = "pothole_model.onnx"
-ANOMALY_CONF_THRESHOLD = 0.5
-POTHOLE_CONF_THRESHOLD = 0.5
+ANOMALY_MODEL_PATH = "new_model/Model2_General.onnx"
+POTHOLE_MODEL_PATH = "new_model/Model1_Pothole.onnx"
+ANOMALY_CONF_THRESHOLD = 0.7
+POTHOLE_CONF_THRESHOLD = 0.7
 ```
 
-### Performance Settings
-```python
-INTRA_OP_NUM_THREADS = 4  # RPi5 has 4 cores
-INTER_OP_NUM_THREADS = 2
-NUM_WARMUP_RUNS = 10
-USE_ALTERNATE_MODELS = True  # Alternate between models
-```
-
-### Detection Settings
-```python
-HIGH_CONF_SAVE_THRESHOLD = 0.75  # Save images above this confidence
-NMS_THRESHOLD = 0.45  # Non-max suppression threshold
-MAX_LATENCY_MS = 200  # Drop frames if latency exceeds this
-```
-
-### Camera Settings
-```python
-CAMERA_WIDTH = 640
-CAMERA_HEIGHT = 480
-CAMERA_FPS = 30
 ```
 
 ### Output Settings
@@ -364,24 +363,10 @@ sudo py-spy record -o profile.svg -- python main.py --source camera
 
 ---
 
-## 📚 Additional Resources
-
-- [ONNX Runtime Optimization](https://onnxruntime.ai/docs/performance/tune-performance.html)
-- [RPi5 Overclocking Guide](https://www.raspberrypi.com/documentation/computers/config_txt.html)
-- [OpenCV Performance](https://docs.opencv.org/4.x/dc/d71/tutorial_py_optimization.html)
-
----
-
 ## 📄 License
 
 MIT License - Feel free to use and modify.
 
 ---
 
-## 🤝 Contributing
-
-Found a bug or have an optimization? Open an issue or PR!
-
----
-
-**Built for RPi5 with ❤️ and optimization in mind**
+**Built for RPi5 with performace and optimization in mind**
