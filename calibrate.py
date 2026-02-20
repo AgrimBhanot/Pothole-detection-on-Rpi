@@ -37,21 +37,21 @@ class YOLODataCalibrationReader(CalibrationDataReader):
 
 nodes_to_skip = [
     # '/model.22/cv2.0/cv2.0.2/Conv', 
-    '/model.22/dfl/conv/Conv',
+    '/model.22/dfl/conv/Conv',#
     '/model.22/cv3.1/cv3.1.2/Conv',
     '/model.22/cv2.1/cv2.1.2/Conv',
     '/model.22/cv2.2/cv2.2.2/Conv',
     '/model.22/cv3.2/cv3.2.2/Conv',
-    '/model.22/Concat_4',
+    '/model.22/Concat_4',#
 
     '/model.22/Concat_5', # Often the final assembly point
 ]
 
 quantize_static(
-    model_input="share/best_preprocessed.onnx",
-    model_output="best_preprocessed_excluded.onnx",
+    model_input="new_model/best_preprocessed.onnx",
+    model_output="new_model/new_preprocessed_excluded.onnx",
     calibration_data_reader=YOLODataCalibrationReader(
-        "images-20260203T192437Z-3-001/images",
+        "calibrate",
         "images"
     ),
     quant_format=QuantType.QInt8,

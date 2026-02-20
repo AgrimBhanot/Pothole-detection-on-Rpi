@@ -5,7 +5,7 @@ import os
 
 # 1. Setup Session
 # On x64 laptops, we don't need the specific ARM threading tweaks
-model_path = "best_preprocessed_excluded.onnx"
+model_path = "new_model/new_preprocessed_excluded.onnx"
 session = ort.InferenceSession(model_path, providers=['CPUExecutionProvider'])
 input_name = session.get_inputs()[0].name
 

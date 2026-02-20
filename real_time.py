@@ -272,7 +272,7 @@ def process_video(detector, video_path, save_output=False, output_path=None):
 
 def main():
     parser = argparse.ArgumentParser(description='Real-time Object Detection with YOLOv8 ONNX')
-    parser.add_argument('--model', type=str, default='best_preprocessed_excluded.onnx',
+    parser.add_argument('--model', type=str, default='new_model/new_preprocessed_excluded.onnx',
                         help='Path to ONNX model file')
     parser.add_argument('--source', type=str, default='camera',
                         help='Input source: "camera" or path to video file')
