@@ -4,3 +4,5 @@ myvenv
 results
 share
 test_images
+detections
+_pycache__

@@ -3,9 +3,22 @@ import numpy as np
 import onnxruntime as ort
 import argparse
 import sys
+import os   
 
 class YOLOv8Detector:
     def __init__(self, model_path, conf_threshold=0.5):
+        sess_options = ort.SessionOptions()
+        sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        sess_options.intra_op_num_threads = 4                  # Pi 4/5 has 4 cores
+        sess_options.inter_op_num_threads = 2
+        sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        sess_options.enable_profiling = False
+
+        self.session = ort.InferenceSession(
+            model_path,
+            sess_options=sess_options,
+            providers=['CPUExecutionProvider']
+        )
         """Initialize the YOLO detector with ONNX model"""
         self.model_path = model_path
         self.conf_threshold = conf_threshold
@@ -37,43 +50,74 @@ class YOLOv8Detector:
         
         return img_data
     
-    def postprocess(self, outputs, frame):
-        """Process model outputs and draw bounding boxes"""
-        h, w = frame.shape[:2]
+    # def postprocess(self, outputs, frame):
+    #     """Process model outputs and draw bounding boxes"""
+    #     h, w = frame.shape[:2]
         
-        # YOLOv8 output is typically [1, 84, 8400]
-        # Transpose to [8400, 84] for easier processing
-        predictions = np.squeeze(outputs[0]).T
+    #     # YOLOv8 output is typically [1, 84, 8400]
+    #     # Transpose to [8400, 84] for easier processing
+    #     predictions = np.squeeze(outputs[0]).T
         
-        boxes = []
-        scores = []
+    #     boxes = []
+    #     scores = []
         
-        # Process each prediction
-        for pred in predictions:
-            # Get class scores (skip first 4 values which are box coordinates)
-            class_scores = pred[4:]
-            score = np.max(class_scores)
+    #     # Process each prediction
+    #     for pred in predictions:
+    #         # Get class scores (skip first 4 values which are box coordinates)
+    #         class_scores = pred[4:]
+    #         score = np.max(class_scores)
             
-            if score > self.conf_threshold:
-                # Get box coordinates
-                cx, cy, bw, bh = pred[:4]
+    #         if score > self.conf_threshold:
+    #             # Get box coordinates
+    #             cx, cy, bw, bh = pred[:4]
                 
-                # Scale boxes back to original image size
-                x1 = int((cx - bw/2) * (w / self.input_width))
-                y1 = int((cy - bh/2) * (h / self.input_height))
-                x2 = int((cx + bw/2) * (w / self.input_width))
-                y2 = int((cy + bh/2) * (h / self.input_height))
+    #             # Scale boxes back to original image size
+    #             x1 = int((cx - bw/2) * (w / self.input_width))
+    #             y1 = int((cy - bh/2) * (h / self.input_height))
+    #             x2 = int((cx + bw/2) * (w / self.input_width))
+    #             y2 = int((cy + bh/2) * (h / self.input_height))
                 
-                # Clamp coordinates to image boundaries
-                x1 = max(0, min(x1, w))
-                y1 = max(0, min(y1, h))
-                x2 = max(0, min(x2, w))
-                y2 = max(0, min(y2, h))
+    #             # Clamp coordinates to image boundaries
+    #             x1 = max(0, min(x1, w))
+    #             y1 = max(0, min(y1, h))
+    #             x2 = max(0, min(x2, w))
+    #             y2 = max(0, min(y2, h))
                 
-                boxes.append((x1, y1, x2, y2))
-                scores.append(score)
+    #             boxes.append((x1, y1, x2, y2))
+    #             scores.append(score)
         
-        return boxes, scores
+    #     return boxes, scores
+    def postprocess(self, outputs, frame):
+        h, w = frame.shape[:2]
+        predictions = np.squeeze(outputs[0]).T  # [8400, 84] or [8400, 5] for 1-class
+
+        # Vectorized filter (HUGE speed-up)
+        scores = np.max(predictions[:, 4:], axis=1)
+        mask = scores > self.conf_threshold
+        filtered = predictions[mask]
+
+        if len(filtered) == 0:
+            return [], []
+
+        # Extract boxes
+        boxes = filtered[:, :4]
+        scores = scores[mask]
+
+        # Scale to original image (vectorized)
+        scale_x = w / self.input_width
+        scale_y = h / self.input_height
+        x1 = ((boxes[:, 0] - boxes[:, 2]/2) * scale_x).astype(int)
+        y1 = ((boxes[:, 1] - boxes[:, 3]/2) * scale_y).astype(int)
+        x2 = ((boxes[:, 0] + boxes[:, 2]/2) * scale_x).astype(int)
+        y2 = ((boxes[:, 1] + boxes[:, 3]/2) * scale_y).astype(int)
+
+        # Clamp
+        x1 = np.clip(x1, 0, w)
+        y1 = np.clip(y1, 0, h)
+        x2 = np.clip(x2, 0, w)
+        y2 = np.clip(y2, 0, h)
+
+        return list(zip(x1, y1, x2, y2)), scores.tolist()
     
     def draw_detections(self, frame, boxes, scores):
         """Draw bounding boxes and labels on frame"""
