@@ -100,11 +100,15 @@ class DetectionPipeline:
                 
                 # Put in queue (non-blocking to check latency)
                 try:
-                    self.capture_queue.put(frame_data, block=False)
+                    # For video, WAIT for queue space (don't drop frames)
+                    # For camera, drop frames if queue is full
+                    if target_fps is None:  # Indicates video mode
+                        self.capture_queue.put(frame_data, block=True, timeout=1.0)
+                    else:  # Camera mode
+                        self.capture_queue.put(frame_data, block=False)
                     last_time = current_time
                 except:
-                    # Queue full - this means we're processing too slowly
-                    # Drop this frame and continue
+                    # Only happens in camera mode or timeout
                     pass
         
         process = mp.Process(target=capture_worker, daemon=True)
@@ -139,10 +143,10 @@ class DetectionPipeline:
                     continue
                 
                 # Check latency
-                latency_ms = (time.time() - frame_data.timestamp) * 1000
-                if latency_ms > self.max_latency_ms:
-                    # Frame is too old, drop it
-                    continue
+                if use_latency_check:  # Will be False for video
+                    latency_ms = (time.time() - frame_data.timestamp) * 1000
+                    if latency_ms > self.max_latency_ms:
+                        continue
                 
                 # Select detector
                 if use_alternate:

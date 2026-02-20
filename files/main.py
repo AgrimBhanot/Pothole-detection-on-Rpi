@@ -118,7 +118,7 @@ class RPi5DetectionSystem:
         # So we'll use a simplified single-process approach for now
         # For true multiprocessing, you'd need to use queues with serializable data
         
-        self._run_detection_loop()
+        self._run_detection_loop(is_video=False)
     
     def run_video(self, video_path: str):
         """
@@ -147,8 +147,7 @@ class RPi5DetectionSystem:
             max_latency_ms=config.MAX_LATENCY_MS
         )
         
-        self._run_detection_loop()
-    
+        self._run_detection_loop(is_video=True)
     def _run_detection_loop(self, is_video: bool = False):
         """Main detection loop (simplified single-process version)
         Arg: is_video, checking if it is video
@@ -252,6 +251,24 @@ class RPi5DetectionSystem:
                     # Alternate models
                     if self.use_dual_models and config.USE_ALTERNATE_MODELS:
                         use_model_1 = not use_model_1
+
+                if is_video and isinstance(self.camera, VideoCapture):
+                    progress = self.camera.get_progress()
+                    
+                    # Add progress bar to frame (optional)
+                    h, w = result_frame.shape[:2]
+                    bar_height = 10
+                    bar_filled = int((progress / 100) * w)
+                    
+                    # Draw progress bar at bottom
+                    cv2.rectangle(result_frame, (0, h-bar_height), (w, h), (50, 50, 50), -1)
+                    cv2.rectangle(result_frame, (0, h-bar_height), (bar_filled, h), (0, 255, 0), -1)
+                    
+                    # Update console print
+                    if fps_frame_count % 30 == 0:
+                        print(f"Progress: {progress:.1f}% | FPS: {current_fps:.1f} | "
+                            f"Detections: {len(combined_boxes)}")
+
                 
                 if is_video and hasattr(self.camera, 'cap'):
                     video_fps = self.camera.cap.get(cv2.CAP_PROP_FPS)

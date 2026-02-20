@@ -69,9 +69,10 @@ class ThreadedCamera:
                     self.frame_count += 1
             else:
                 # If reading fails, try to reconnect
-                print("⚠️  Frame read failed, attempting to reconnect...")
-                time.sleep(0.1)
-    
+                self.running = False
+                print("Frame read failed, attempting to reconnect...")
+                break
+            time.sleep(0.01)  # Small sleep to prevent CPU hogging    
     def read(self) -> Tuple[bool, Optional[np.ndarray]]:
         """
         Get the latest frame

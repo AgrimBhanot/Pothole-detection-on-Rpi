@@ -33,10 +33,11 @@ class SystemConfig:
     INTRA_OP_NUM_THREADS: int = 4  # Pi5 has 4 cores
     INTER_OP_NUM_THREADS: int = 2
     NUM_WARMUP_RUNS: int = 10
-    
+    VIDEO_PROCESS_ALL_FRAMES: bool = True  # Process every frame in video
+    VIDEO_DISPLAY_SPEED: str = "original"
     # Pipeline settings
-    FRAME_QUEUE_SIZE: int = 2  # Small queue to minimize latency
-    MAX_LATENCY_MS: int = 200  # Drop frames if latency exceeds this
+    FRAME_QUEUE_SIZE: int = 10  # Small queue to minimize latency
+    MAX_LATENCY_MS: int = 1000  # Drop frames if latency exceeds this
     USE_ALTERNATE_MODELS: bool = True  # Alternate between models each frame
     
     # Camera settings
