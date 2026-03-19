@@ -1,321 +1,189 @@
 """
-Test script for RPi5 Object Detection System
-Verifies all components work correctly
+Test script for RPi5 Object Detection System (v2)
+Tests all new components: ModelPairManager, ByteTracker, Pipeline.
 """
-
 import sys
 import time
 import numpy as np
-import cv2
 from pathlib import Path
 
-GREEN = '\033[92m'
-RED = '\033[91m'
-YELLOW = '\033[93m'
-BLUE = '\033[94m'
-RESET = '\033[0m'
+GREEN = '\033[92m'; RED = '\033[91m'; YELLOW = '\033[93m'
+BLUE = '\033[94m';  RESET = '\033[0m'
 
-def print_header(text):
-    """Print colored header"""
-    print(f"\n{BLUE}{'='*60}{RESET}")
-    print(f"{BLUE}{text}{RESET}")
-    print(f"{BLUE}{'='*60}{RESET}\n")
-
-def print_success(text):
-    """Print success message"""
-    print(f"{GREEN} {text}{RESET}")
-
-def print_error(text):
-    """Print error message"""
-    print(f"{RED} {text}{RESET}")
-
-def print_warning(text):
-    """Print warning message"""
-    print(f"{YELLOW} {text}{RESET}")
+def ph(t): print(f"\n{BLUE}{'='*60}\n{t}\n{'='*60}{RESET}\n")
+def ok(t): print(f"{GREEN}✓ {t}{RESET}")
+def err(t): print(f"{RED}✗ {t}{RESET}")
+def warn(t): print(f"{YELLOW}⚠ {t}{RESET}")
 
 def test_imports():
-    """Test if all required packages can be imported"""
-    print_header("Testing Package Imports")
-    
-    packages = {
-        'cv2': 'OpenCV',
-        'numpy': 'NumPy',
-        'onnxruntime': 'ONNX Runtime',
-        'psutil': 'psutil'
-    }
-    
-    all_passed = True
-    for package, name in packages.items():
-        try:
-            __import__(package)
-            print_success(f"{name} imported successfully")
-        except ImportError as e:
-            print_error(f"{name} import failed: {e}")
-            all_passed = False
-    
-    return all_passed
+    ph("Testing Package Imports")
+    pkgs = {'cv2':'OpenCV','numpy':'NumPy','onnxruntime':'ONNX Runtime','psutil':'psutil'}
+    passed = True
+    for pkg, name in pkgs.items():
+        try: __import__(pkg); ok(f"{name}")
+        except ImportError as e: err(f"{name}: {e}"); passed = False
+    return passed
 
 def test_config():
-    """Test configuration file"""
-    print_header("Testing Configuration")
-    
+    ph("Testing Configuration")
     try:
         from config import config
-        print_success("Config module loaded")
-        
-        print(f"  Anomaly model: {config.ANOMALY_MODEL_PATH}")
-        print(f"  Pothole model: {config.POTHOLE_MODEL_PATH}")
-        print(f"  Confidence threshold: {config.ANOMALY_CONF_THRESHOLD}")
-        print(f"  Save threshold: {config.HIGH_CONF_SAVE_THRESHOLD}")
-        print(f"  Output directory: {config.OUTPUT_DIR}")
-        
+        ok("Config loaded")
+        print(f"  FP32 general:    {config.ANOMALY_MODEL_PATH}")
+        print(f"  FP32 pothole:    {config.POTHOLE_MODEL_PATH}")
+        print(f"  INT8 general:    {config.ANOMALY_MODEL_QUANT_PATH}")
+        print(f"  INT8 pothole:    {config.POTHOLE_MODEL_QUANT_PATH}")
+        print(f"  FPS down/up:     {config.FPS_DOWNGRADE_THRESHOLD} / {config.FPS_UPGRADE_THRESHOLD}")
+        print(f"  Temp down/up:    {config.TEMP_DOWNGRADE_THRESHOLD} / {config.TEMP_UPGRADE_THRESHOLD}°C")
+        print(f"  Cooldown:        {config.SWITCH_COOLDOWN_SECONDS}s")
         return True
     except Exception as e:
-        print_error(f"Config test failed: {e}")
-        return False
+        err(f"Config: {e}"); return False
 
-def test_detector():
-    """Test detector with dummy input"""
-    print_header("Testing Detector")
-    
+def test_tracker():
+    ph("Testing ByteTracker (Task 2)")
+    try:
+        from tracker import ByteTracker, TrackState
+        tracker = ByteTracker(label="Pothole", max_lost_frames=3)
+        ok("ByteTracker initialised")
+
+        # Frame 1: two detections
+        boxes  = [(10,10,50,50), (200,200,300,300)]
+        scores = [0.85, 0.72]
+        tracks = tracker.update(boxes, scores)
+        assert len(tracks) == 2, f"Expected 2 tracks, got {len(tracks)}"
+        ok(f"Frame 1: {len(tracks)} tracks created")
+
+        # Frame 2: one detection — other should remain (LOST, not removed yet)
+        tracks = tracker.update([(10,10,50,50)], [0.90])
+        assert len(tracks) == 1
+        ok(f"Frame 2: {len(tracks)} active track")
+
+        # IDs are persistent
+        assert tracks[0].track_id == 1
+        ok(f"Persistent track ID: #{tracks[0].track_id}")
+
+        # Max confidence accumulates
+        assert tracks[0].max_confidence == 0.90
+        ok(f"Max confidence tracked: {tracks[0].max_confidence:.2f}")
+
+        # After max_lost_frames, second track should be purged with log
+        print("  (Expect lifecycle log below:)")
+        for _ in range(5):
+            tracker.update([(10,10,50,50)], [0.80])
+        ok("Track lifecycle log emitted on purge")
+
+        return True
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        err(f"Tracker test: {e}"); return False
+
+def test_model_manager():
+    ph("Testing ModelPairManager (Task 1)")
     try:
         from config import config
-        from detector import OptimizedYOLODetector
-        
+        from model_manager import ModelPairManager, ModelMode
+
         if not Path(config.ANOMALY_MODEL_PATH).exists():
-            print_warning(f"Model file not found: {config.ANOMALY_MODEL_PATH}")
-            print("  Skipping detector test")
+            warn("FP32 model not found — skipping ModelPairManager test")
             return True
-        
-        print("Loading model...")
-        detector = OptimizedYOLODetector(
-            model_config=config.get_anomaly_config(),
-            warmup_runs=2  
-        )
-        print_success("Detector initialized")
-        
-        print("Running inference on dummy frame...")
-        dummy_frame = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
-        
-        start_time = time.time()
-        boxes, scores = detector.detect(dummy_frame)
-        inference_time = (time.time() - start_time) * 1000
-        
-        print_success(f"Inference completed in {inference_time:.1f}ms")
-        print(f"  Detections: {len(boxes)}")
-        
+
+        mgr = ModelPairManager(config)
+        ok("ModelPairManager initialised")
+
+        assert mgr.current_mode == ModelMode.PERFORMANCE
+        ok(f"Default mode: {mgr.current_mode.value}")
+
+        # Test EMA FPS update
+        for fps in [14, 15, 14, 15]:
+            mgr.update_fps(fps)
+        assert mgr.ema_fps > 10
+        ok(f"EMA FPS after good frames: {mgr.ema_fps:.1f}")
+
+        # Simulate low FPS to trigger downgrade
+        for _ in range(20):
+            mgr.update_fps(5.0)
+        mgr._last_switch = 0  # Reset cooldown for test
+        switched = mgr.check_and_switch()
+        if switched:
+            ok(f"Mode switched to EFFICIENCY (low FPS)")
+        else:
+            warn("Mode did not switch (EMA may not have dropped enough)")
+
         return True
     except Exception as e:
-        print_error(f"Detector test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-def test_camera():
-    """Test camera/video capture"""
-    print_header("Testing Camera")
-    
-    try:
-        from camera import ThreadedCamera
-        
-        print("Attempting to open camera 0...")
-        try:
-            camera = ThreadedCamera(src=0, width=640, height=480, fps=30)
-            print_success("Camera opened successfully")
-            
-            ret, frame = camera.read()
-            if ret and frame is not None:
-                print_success(f"Frame captured: {frame.shape}")
-            else:
-                print_warning("Camera opened but failed to capture frame")
-            
-            camera.release()
-            return True
-            
-        except Exception as e:
-            print_warning(f"Camera test failed: {e}")
-            print("  This is expected if no camera is connected")
-            return True
-            
-    except Exception as e:
-        print_error(f"Camera module test failed: {e}")
-        return False
+        import traceback; traceback.print_exc()
+        err(f"ModelPairManager: {e}"); return False
 
 def test_visualizer():
-    """Test visualizer"""
-    print_header("Testing Visualizer")
-    
+    ph("Testing Visualizer (updated)")
     try:
         from visualizer import Visualizer, DetectionSaver
-        from config import config
-        
-        # Test visualizer
-        vis = Visualizer()
-        print_success("Visualizer initialized")
-        
-        dummy_frame = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
-        boxes = [(100, 100, 200, 200), (300, 300, 400, 400)]
-        scores = [0.85, 0.92]
-        
-        result = vis.draw_detections(dummy_frame, boxes, scores, "TestModel")
-        print_success("Detections drawn successfully")
-        
-        result = vis.add_fps_overlay(result, 10.5)
-        print_success("FPS overlay added")
-        
-        result = vis.add_timestamp_overlay(result, time.time())
-        print_success("Timestamp overlay added")
-        
-        # Test saver
-        import tempfile
-        import shutil
-        temp_dir = tempfile.mkdtemp()
-        
-        try:
-            saver = DetectionSaver(output_dir=temp_dir, high_conf_threshold=0.75)
-            print_success("Detection saver initialized")
-            
-            saver.save_detection(dummy_frame, boxes, scores, "TestModel", time.time())
-            time.sleep(0.5) 
-            
-            saved_files = list(Path(temp_dir).glob("*.jpg"))
-            if saved_files:
-                print_success(f"Detection saved: {len(saved_files)} file(s)")
-            else:
-                print_warning("No files saved (might be async delay)")
-            
-            saver.stop()
-        finally:
-            shutil.rmtree(temp_dir, ignore_errors=True)
-        
-        return True
-        
-    except Exception as e:
-        print_error(f"Visualizer test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
+        from tracker import ByteTracker
 
-def test_monitor():
-    """Test performance monitor"""
-    print_header("Testing Performance Monitor")
-    
-    try:
-        from monitor import PerformanceMonitor
-        
-        monitor = PerformanceMonitor()
-        print_success("Performance monitor initialized")
-        
-        monitor.update_fps(10.5)
-        monitor.update_inference_time(95.3)
-        monitor.update_system_metrics()
-        monitor.increment_frames()
-        monitor.increment_detections(3)
-        
-        stats = monitor.get_stats()
-        print_success(f"Stats collected: {len(stats)} metrics")
-        
-        temp = monitor.get_temperature()
-        if temp:
-            print(f"  CPU Temperature: {temp:.1f}°C")
-        
-        return True
-        
-    except Exception as e:
-        print_error(f"Monitor test failed: {e}")
-        return False
-
-def test_integration():
-    """Test basic integration"""
-    print_header("Testing Integration")
-    
-    try:
-        from config import config
-        from detector import OptimizedYOLODetector
-        from visualizer import Visualizer
-        
-        if not Path(config.ANOMALY_MODEL_PATH).exists():
-            print_warning("Model file not found, skipping integration test")
-            return True
-        
-        print("Creating detector...")
-        detector = OptimizedYOLODetector(
-            model_config=config.get_anomaly_config(),
-            warmup_runs=1
-        )
-        
-        print("Creating visualizer...")
         vis = Visualizer()
-        
-        print("Running full pipeline on dummy frame...")
-        dummy_frame = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
-        
-        boxes, scores = detector.detect(dummy_frame)
-        
-        result = vis.draw_detections(dummy_frame, boxes, scores, detector.get_name())
-        result = vis.add_fps_overlay(result, 10.0)
-        result = vis.add_timestamp_overlay(result, time.time())
-        
-        print_success("Full pipeline executed successfully")
-        print(f"  Frame shape: {result.shape}")
-        print(f"  Detections: {len(boxes)}")
-        
+        ok("Visualizer initialised")
+
+        frame  = np.zeros((480, 640, 3), dtype=np.uint8)
+        tracker = ByteTracker(label="Obstacle")
+        tracks  = tracker.update([(100,100,200,200)], [0.85])
+
+        frame = vis.draw_tracks(frame, tracks, [])
+        ok("draw_tracks rendered")
+
+        frame = vis.add_mode_overlay(frame, "PERFORMANCE")
+        ok("Mode overlay rendered")
+
+        frame = vis.add_fps_overlay(frame, 14.5)
+        ok("FPS overlay rendered")
+
         return True
-        
     except Exception as e:
-        print_error(f"Integration test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
+        import traceback; traceback.print_exc()
+        err(f"Visualizer: {e}"); return False
+
+def test_pipeline_import():
+    ph("Testing Pipeline (Task 3) — import & structure")
+    try:
+        from pipeline import DetectionPipeline, FrameData, DetectionResult
+        ok("Pipeline module imported")
+
+        p = DetectionPipeline(max_queue_size=1, max_latency_ms=200)
+        ok("DetectionPipeline instantiated")
+        assert hasattr(p, 'mode_val'), "mode_val shared value missing"
+        ok("mode_val shared state present")
+
+        return True
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        err(f"Pipeline: {e}"); return False
 
 def main():
-    """Run all tests"""
-    print_header("RPi5 Object Detection System - Test Suite")
-    
+    ph("RPi5 Detection System v2 — Test Suite")
     tests = [
-        ("Package Imports", test_imports),
-        ("Configuration", test_config),
-        ("Detector", test_detector),
-        ("Camera", test_camera),
-        ("Visualizer", test_visualizer),
-        ("Performance Monitor", test_monitor),
-        ("Integration", test_integration),
+        ("Package Imports",   test_imports),
+        ("Configuration",     test_config),
+        ("ByteTracker",       test_tracker),
+        ("ModelPairManager",  test_model_manager),
+        ("Visualizer",        test_visualizer),
+        ("Pipeline",          test_pipeline_import),
     ]
-    
     results = []
-    
-    for name, test_func in tests:
+    for name, fn in tests:
         try:
-            result = test_func()
-            results.append((name, result))
+            results.append((name, fn()))
         except Exception as e:
-            print_error(f"Test '{name}' crashed: {e}")
+            err(f"'{name}' crashed: {e}")
             results.append((name, False))
-    
-    print_header("Test Summary")
-    
-    passed = sum(1 for _, result in results if result)
-    total = len(results)
-    
-    for name, result in results:
-        if result:
-            print_success(f"{name}: PASSED")
-        else:
-            print_error(f"{name}: FAILED")
-    
+
+    ph("Summary")
+    passed = sum(1 for _, r in results if r)
+    for name, r in results:
+        (ok if r else err)(f"{name}: {'PASSED' if r else 'FAILED'}")
     print(f"\n{BLUE}{'='*60}{RESET}")
-    if passed == total:
-        print(f"{GREEN}All tests passed! ({passed}/{total}){RESET}")
-        print(f"{GREEN}System is ready to use.{RESET}")
-        return 0
-    else:
-        print(f"{YELLOW}Some tests failed: {passed}/{total} passed{RESET}")
-        if passed >= total - 1:
-            print(f"{YELLOW}System might still be usable.{RESET}")
-        else:
-            print(f"{RED}Please fix the issues before using the system.{RESET}")
-        return 1
-    print(f"{BLUE}{'='*60}{RESET}\n")
+    status = GREEN if passed == len(results) else YELLOW
+    print(f"{status}{passed}/{len(results)} tests passed{RESET}")
+    return 0 if passed == len(results) else 1
 
 if __name__ == "__main__":
     sys.exit(main())

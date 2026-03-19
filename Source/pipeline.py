@@ -1,230 +1,397 @@
 """
-Multiprocessing pipeline for async detection
-Separates capture, inference, and display into parallel processes
+True Multiprocessing Pipeline — Task 3
+=======================================
+Separates the three compute stages into independent OS processes:
+
+  Process 1 — Camera / Capture
+      Reads frames from Pi camera or video file.
+      Drops frames if the capture queue is full (never blocks).
+
+  Process 2 — Inference
+      Creates ModelPairManager (all 4 ONNX models) on startup.
+      Alternates between general and pothole detectors each frame.
+      Monitors FPS + temperature; switches model pair via hysteresis.
+      Drops stale frames (latency > MAX_LATENCY_MS).
+
+  Process 3 (Main thread) — Tracking + Display
+      Reads DetectionResult objects from the detection queue.
+      Runs ByteTrackers and renders the frame.
+      (The main thread serves as "Process 3" since cv2.imshow requires it.)
+
+Queue design (zero-latency):
+    maxsize=1  → putting a new item when full discards the old one
+                 so the inference / display always sees the latest frame.
+
+Important: worker functions MUST be module-level (not closures) to be
+picklable under the 'spawn' start method.  On Linux the default is 'fork'
+but module-level functions work on both.
 """
+
 import multiprocessing as mp
 import time
-import numpy as np
-from typing import Optional, Tuple, List
+import queue as _queue_module
+from collections import deque
 from dataclasses import dataclass
-from datetime import datetime
+from typing import Optional, Tuple, List
+
+
+# ---------------------------------------------------------------------------
+# Data containers (must be picklable — plain dataclasses are fine)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class FrameData:
+    """Minimal frame envelope passed from capture → inference."""
+    frame:      object    # np.ndarray (picklable via pickle/shared memory)
+    frame_id:   int
+    timestamp:  float     # time.time() at capture
+
 
 @dataclass
 class DetectionResult:
-    """Container for detection results"""
-    frame: np.ndarray
-    boxes: List[Tuple[int, int, int, int]]
-    scores: List[float]
-    model_name: str
-    timestamp: float
-    frame_id: int
-    
-@dataclass
-class FrameData:
-    """Container for frame data"""
-    frame: np.ndarray
-    frame_id: int
-    timestamp: float
+    """Detection output passed from inference → display."""
+    frame:            object    # np.ndarray — the source frame
+    boxes:            list      # List[Tuple[int,int,int,int]]
+    scores:           list      # List[float]
+    model_name:       str
+    timestamp:        float
+    frame_id:         int
+    is_pothole_frame: bool      # True if pothole model ran; False if general
+    mode_label:       str       # "PERFORMANCE" | "EFFICIENCY"
 
+
+# ---------------------------------------------------------------------------
+# Module-level worker functions  (picklable for multiprocessing)
+# ---------------------------------------------------------------------------
+
+def _capture_worker(
+    camera_src: object,          # "pi_camera" | int | str path
+    width:      int,
+    height:     int,
+    fps:        int,
+    capture_q:  mp.Queue,
+    running:    mp.Value,        # mp.Value('i')
+) -> None:
+    """
+    Capture Process worker.
+
+    Creates its own camera instance INSIDE the subprocess so that
+    picamera2 is initialised after forking (picamera2 docs requirement).
+    Drops frames instead of blocking when the capture queue is full.
+    """
+    # Import inside worker — safe for both fork and spawn start methods
+    from camera import ThreadedCamera
+
+    try:
+        cam = ThreadedCamera(
+            src=camera_src,
+            width=width,
+            height=height,
+            fps=fps,
+        )
+    except Exception as exc:
+        print(f"[CaptureWorker] Failed to open camera: {exc}")
+        _put_sentinel(capture_q)
+        return
+
+    frame_id = 0
+    print("[CaptureWorker] Started.")
+
+    while running.value:
+        ret, frame = cam.read()
+        if not ret or frame is None:
+            # End of video file or camera disconnected
+            break
+        frame_data = FrameData(
+            frame=frame,
+            frame_id=frame_id,
+            timestamp=time.time(),
+        )
+        frame_id += 1
+        _put_drop_old(capture_q, frame_data)
+
+    # Signal downstream that no more frames are coming
+    _put_sentinel(capture_q)
+    cam.release()
+    print("[CaptureWorker] Stopped.")
+
+
+def _inference_worker(
+    capture_q:      mp.Queue,
+    detection_q:    mp.Queue,
+    running:        mp.Value,    # mp.Value('i')
+    mode_val:       mp.Value,    # mp.Value('i')  1=PERF, 0=EFF
+    max_latency_ms: int,
+) -> None:
+    """
+    Inference Process worker.
+
+    • Loads all four ONNX detectors via ModelPairManager at startup.
+      (ONNX sessions must be created inside the process — not pickled.)
+    • Alternates between general and pothole detectors each inference frame.
+    • Updates EMA FPS and checks hysteresis switching every ~1 second.
+    • Drops frames whose queue latency exceeds max_latency_ms.
+    • Replaces stale detection results (drop-old strategy) so the display
+      process always sees the most recent inference output.
+    """
+    from config import config
+    from model_manager import ModelPairManager, ModelMode
+
+    print("[InferenceWorker] Initialising model pair manager…")
+    try:
+        manager = ModelPairManager(config)
+    except Exception as exc:
+        print(f"[InferenceWorker] FATAL: Could not load models: {exc}")
+        _put_sentinel(detection_q)
+        return
+
+    use_pothole_frame   = False        # Alternating flag
+    frame_times: deque  = deque(maxlen=30)
+    last_switch_check   = time.monotonic()
+
+    print("[InferenceWorker] Started.")
+
+    while running.value:
+        # --- Grab the next frame (drop stale items) -----------------------
+        try:
+            frame_data = capture_q.get(timeout=0.1)
+        except _queue_module.Empty:
+            continue
+
+        if frame_data is None:          # End-of-stream sentinel
+            _put_sentinel(detection_q)
+            break
+
+        # --- Latency guard — discard frames that are too old --------------
+        latency_ms = (time.time() - frame_data.timestamp) * 1000.0
+        if max_latency_ms > 0 and latency_ms > max_latency_ms:
+            continue                    # Frame is stale; skip it
+
+        # --- Select active model pair (zero latency) ----------------------
+        general_det, pothole_det = manager.get_active_detectors()
+
+        # --- Alternate between models each frame --------------------------
+        t0 = time.time()
+        if use_pothole_frame:
+            boxes, scores = pothole_det.detect(frame_data.frame)
+            model_name    = pothole_det.get_name()
+            is_pothole    = True
+        else:
+            boxes, scores = general_det.detect(frame_data.frame)
+            model_name    = general_det.get_name()
+            is_pothole    = False
+        t1 = time.time()
+
+        use_pothole_frame = not use_pothole_frame   # Flip for next frame
+
+        # --- Update EMA FPS -----------------------------------------------
+        inference_s = t1 - t0
+        if inference_s > 0:
+            frame_times.append(inference_s)
+            if len(frame_times) >= 5:
+                avg_t = sum(frame_times) / len(frame_times)
+                manager.update_fps(1.0 / avg_t)
+
+        # --- Periodic hysteresis check (once per second) ------------------
+        if t1 - last_switch_check >= 1.0:
+            manager.check_and_switch()
+            # Publish current mode to the shared integer so the main
+            # process can display it without inter-process function calls.
+            mode_val.value = (
+                1 if manager.current_mode == ModelMode.PERFORMANCE else 0
+            )
+            last_switch_check = t1
+
+        # --- Build result and push to display queue -----------------------
+        result = DetectionResult(
+            frame            = frame_data.frame,
+            boxes            = boxes,
+            scores           = scores,
+            model_name       = model_name,
+            timestamp        = frame_data.timestamp,
+            frame_id         = frame_data.frame_id,
+            is_pothole_frame = is_pothole,
+            mode_label       = manager.mode_label,
+        )
+        _put_drop_old(detection_q, result)
+
+    print("[InferenceWorker] Stopped.")
+
+
+# ---------------------------------------------------------------------------
+# Helper utilities
+# ---------------------------------------------------------------------------
+
+def _put_drop_old(q: mp.Queue, item) -> None:
+    """
+    Non-blocking put.  If the queue is full, discard the oldest item and
+    insert the new one.  This guarantees the consumer always sees the
+    LATEST data — never a backlog.
+    """
+    try:
+        q.put(item, block=False)
+    except _queue_module.Full:
+        try:
+            q.get_nowait()          # Discard stale item
+            q.put(item, block=False)
+        except Exception:
+            pass                    # Race condition — just skip this frame
+
+
+def _put_sentinel(q: mp.Queue) -> None:
+    """Put a ``None`` sentinel to signal end-of-stream to downstream workers."""
+    try:
+        q.put(None, timeout=2.0)
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Pipeline controller
+# ---------------------------------------------------------------------------
 
 class DetectionPipeline:
     """
-    The Multiprocessing pipeline for object detection is as follows:
-    Architecture:
-    - Process A: Capture frames (camera/video)
-    - Process B: Run inference (alternating models)
-    - Process C: Display and save results
-    This eliminates serial bottlenecks and maximizes throughput
+    Manages the two background processes and their inter-process queues.
+
+    Usage::
+
+        pipeline = DetectionPipeline()
+        pipeline.start(camera_src="pi_camera", width=640, height=480, fps=30)
+
+        while True:
+            result = pipeline.get_result(timeout=0.05)
+            if result is None:
+                continue
+            # ... render result.frame ...
+
+        pipeline.stop()
     """
-    
-    def __init__(self, max_queue_size: int = 2, max_latency_ms: int = 200):
+
+    def __init__(
+        self,
+        max_queue_size: int = 1,
+        max_latency_ms: int = 200,
+    ) -> None:
         """
-        Initialize the pipeline
         Args:
-            max_queue_size: Maximum frames in queue (small = low latency)
-            max_latency_ms: Drop frames if latency exceeds this
+            max_queue_size: Queue depth.  Keep at 1 for zero-latency behaviour.
+            max_latency_ms: Discard inference frames older than this value.
         """
-        # Queues for inter-process communication
-        self.capture_queue = mp.Queue(maxsize=max_queue_size)
-        self.detection_queue = mp.Queue(maxsize=max_queue_size)
-        
-        # Control flags
-        self.running = mp.Value('i', 1)  # Shared integer (1=running, 0=stop)
-        self.frame_counter = mp.Value('i', 0)  # Shared frame counter
-        
-        # Performance tracking
         self.max_latency_ms = max_latency_ms
-        
-        print(" Detection pipeline initialized")
-    
-    def start_capture_process(self, camera, target_fps: Optional[int] = None):
+
+        # Inter-process queues  (maxsize=1 → drop-old on overflow)
+        self.capture_q   = mp.Queue(maxsize=max_queue_size)
+        self.detection_q = mp.Queue(maxsize=max_queue_size)
+
+        # Shared state visible from both processes and the main thread
+        self.running   = mp.Value("i", 1)   # 1 = running
+        self.mode_val  = mp.Value("i", 1)   # 1 = PERFORMANCE, 0 = EFFICIENCY
+
+        self._cap_proc: Optional[mp.Process] = None
+        self._inf_proc: Optional[mp.Process] = None
+
+        print("[Pipeline] Initialised.")
+
+    # ── Lifecycle ──────────────────────────────────────────────────────────
+
+    def start(
+        self,
+        camera_src: object,   # "pi_camera" | int | str path
+        width:      int   = 640,
+        height:     int   = 480,
+        fps:        int   = 30,
+    ) -> None:
         """
-        Start the capture process
-        
-        Args:
-            camera: ThreadedCamera or VideoCapture instance
-            target_fps: Target frame rate (None = unlimited)
+        Spawn the camera capture and inference processes.
+
+        The camera is initialised INSIDE the capture process so that
+        picamera2 is never shared across a fork boundary.
         """
-        def capture_worker():
-            """Worker that captures frames and puts them in queue"""
-            frame_delay = (1.0 / target_fps) if target_fps else 0.0
-            last_time = time.time()
-            
-            while self.running.value:
-                current_time = time.time()
-                
-                # Rate limiting
-                if target_fps and (current_time - last_time) < frame_delay:
-                    time.sleep(0.001)
-                    continue
-                
-                ret, frame = camera.read()
-                if not ret:
-                    break
-                
-                # Get frame ID
-                with self.frame_counter.get_lock():
-                    frame_id = self.frame_counter.value
-                    self.frame_counter.value += 1
-                
-                # Create frame data
-                frame_data = FrameData(
-                    frame=frame,
-                    frame_id=frame_id,
-                    timestamp=current_time
-                )
-                
-                try:
-                   
-                    if target_fps is None:  
-                        self.capture_queue.put(frame_data, block=True, timeout=1.0)
-                    else:  
-                        self.capture_queue.put(frame_data, block=False)
-                    last_time = current_time
-                except:
-                    
-                    pass
-        
-        process = mp.Process(target=capture_worker, daemon=True)
-        process.start()
-        return process
-    
-    def start_inference_process(self, detector1, detector2, use_alternate: bool = True):
+        self.running.value = 1
+
+        # --- Capture process ----------------------------------------------
+        self._cap_proc = mp.Process(
+            target  = _capture_worker,
+            args    = (camera_src, width, height, fps,
+                       self.capture_q, self.running),
+            daemon  = True,
+            name    = "CaptureProcess",
+        )
+        self._cap_proc.start()
+
+        # --- Inference process --------------------------------------------
+        self._inf_proc = mp.Process(
+            target  = _inference_worker,
+            args    = (self.capture_q, self.detection_q,
+                       self.running, self.mode_val, self.max_latency_ms),
+            daemon  = True,
+            name    = "InferenceProcess",
+        )
+        self._inf_proc.start()
+
+        print(
+            f"[Pipeline] Started — "
+            f"CaptureProcess PID {self._cap_proc.pid}, "
+            f"InferenceProcess PID {self._inf_proc.pid}"
+        )
+
+    def stop(self) -> None:
+        """Signal all workers to stop and drain queues."""
+        self.running.value = 0
+
+        # Drain queues so worker joins don't block on full queue
+        for q in (self.capture_q, self.detection_q):
+            _drain(q)
+
+        if self._cap_proc and self._cap_proc.is_alive():
+            self._cap_proc.join(timeout=3.0)
+        if self._inf_proc and self._inf_proc.is_alive():
+            self._inf_proc.join(timeout=5.0)   # Inference may need time to finish
+
+        print("[Pipeline] Stopped.")
+
+    # ── Data access ────────────────────────────────────────────────────────
+
+    def get_result(self, timeout: float = 0.05) -> Optional[DetectionResult]:
         """
-        Start the inference process
-        
-        Args:
-            detector1: First detector (e.g., Anomaly)
-            detector2: Second detector (e.g., Pothole)
-            use_alternate: Whether to alternate between models
-        """
-        def inference_worker():
-            """Worker that runs detection and puts results in queue"""
-            use_model_1 = True
-            
-            last_boxes_1 = []
-            last_scores_1 = []
-            last_boxes_2 = []
-            last_scores_2 = []
-            
-            while self.running.value:
-                try:
-                    frame_data = self.capture_queue.get(timeout=0.1)
-                except:
-                    continue
-                
-                if use_latency_check:  
-                    latency_ms = (time.time() - frame_data.timestamp) * 1000
-                    if latency_ms > self.max_latency_ms:
-                        continue
-                if use_alternate:
-                    detector = detector1 if use_model_1 else detector2
-                    model_name = detector.get_name()
-                else:
-                    detector = detector1
-                    model_name = detector.get_name()
-                
-                boxes, scores = detector.detect(frame_data.frame)
-                
-                if use_model_1:
-                    last_boxes_1 = boxes
-                    last_scores_1 = scores
-                    persistent_boxes = last_boxes_2
-                    persistent_scores = last_scores_2
-                else:
-                    last_boxes_2 = boxes
-                    last_scores_2 = scores
-                    
-                    persistent_boxes = last_boxes_1
-                    persistent_scores = last_scores_1
-                
-                combined_boxes = boxes + persistent_boxes
-                combined_scores = scores + persistent_scores
-                
-                result = DetectionResult(
-                    frame=frame_data.frame,
-                    boxes=combined_boxes,
-                    scores=combined_scores,
-                    model_name=model_name,
-                    timestamp=frame_data.timestamp,
-                    frame_id=frame_data.frame_id
-                )
-                
-                # Put in queue
-                try:
-                    self.detection_queue.put(result, block=False)
-                except:
-                    try:
-                        self.detection_queue.get_nowait()
-                        self.detection_queue.put(result, block=False)
-                    except:
-                        pass
-                
-                if use_alternate:
-                    use_model_1 = not use_model_1
-        
-        process = mp.Process(target=inference_worker, daemon=True)
-        process.start()
-        return process
-    
-    def get_result(self, timeout: float = 0.1) -> Optional[DetectionResult]:
-        """
-        Get detection result from queue
-        
-        Args:
-            timeout: Timeout in seconds
-            
+        Non-blocking fetch of the latest detection result.
+
         Returns:
-            DetectionResult or None
+            A DetectionResult, or ``None`` on timeout / empty queue.
+            Returns ``None`` (no sentinel re-raise) — callers should check
+            whether the inference process has exited separately.
         """
         try:
-            return self.detection_queue.get(timeout=timeout)
-        except:
+            item = self.detection_q.get(timeout=timeout)
+            # ``None`` is the end-of-stream sentinel
+            return item   # May be None for end-of-stream; caller handles it
+        except _queue_module.Empty:
             return None
-    
-    def stop(self):
-        """Stop all processes"""
-        self.running.value = 0
-        
-        while not self.capture_queue.empty():
-            try:
-                self.capture_queue.get_nowait()
-            except:
-                break
-        
-        while not self.detection_queue.empty():
-            try:
-                self.detection_queue.get_nowait()
-            except:
-                break
-        
-        print(" Pipeline stopped")
-    
+
+    def get_current_mode(self) -> str:
+        """Human-readable mode label read from shared memory."""
+        return "PERFORMANCE" if self.mode_val.value == 1 else "EFFICIENCY"
+
     def get_queue_sizes(self) -> Tuple[int, int]:
-        """
-        Get current queue sizes
-        
-        Returns:
-            Tuple of (capture_queue_size, detection_queue_size)
-        """
-        return self.capture_queue.qsize(), self.detection_queue.qsize()
+        """Return (capture_queue_size, detection_queue_size)."""
+        return self.capture_q.qsize(), self.detection_q.qsize()
+
+    def is_alive(self) -> bool:
+        """True while both worker processes are still running."""
+        cap_ok = self._cap_proc is not None and self._cap_proc.is_alive()
+        inf_ok = self._inf_proc is not None and self._inf_proc.is_alive()
+        return cap_ok and inf_ok
+
+
+# ---------------------------------------------------------------------------
+# Internal utility
+# ---------------------------------------------------------------------------
+
+def _drain(q: mp.Queue) -> None:
+    """Empty a queue without blocking."""
+    while True:
+        try:
+            q.get_nowait()
+        except Exception:
+            break

@@ -1,6 +1,14 @@
 """
-Optimized YOLO Detector for Raspberry Pi 5
-The key features include: vectorized operations, NMS, Pre-allocated buffers for zero-copy operations and ONNX Runtime optimizations
+Optimised YOLO Detector for Raspberry Pi 5
+===========================================
+Key features:
+  • Vectorised pre/postprocessing (NumPy)
+  • OpenCV NMS  — cv2.dnn.NMSBoxes() (Task 4 ✓ already implemented)
+  • Pre-allocated input buffer (zero-copy preprocessing)
+  • ONNX Runtime with all graph optimisations enabled
+
+NOTE (Task 4): Python NMS has NOT been used here — cv2.dnn.NMSBoxes()
+was already the implementation in the original codebase.  No change needed.
 """
 
 import cv2
@@ -9,172 +17,157 @@ import onnxruntime as ort
 from typing import List, Tuple
 from config import ModelConfig
 
+
 class OptimizedYOLODetector:
-    def __init__(self, model_config: ModelConfig, intra_threads: int = 4, 
-                 inter_threads: int = 2, warmup_runs: int = 10):
+    def __init__(
+        self,
+        model_config:  ModelConfig,
+        intra_threads: int = 4,
+        inter_threads: int = 2,
+        warmup_runs:   int = 10,
+    ) -> None:
         """
-        Initializing the detector with optimized settings for Raspberry Pi 5
+        Initialise detector with ONNX Runtime optimised for RPi5.
+
         Args:
-            model_config: Model configuration object
-            intra_threads: Number of threads for intra-op parallelism
-            inter_threads: Number of threads for inter-op parallelism
-            warmup_runs: Number of dummy runs for cache warming
+            model_config:  ModelConfig specifying path, thresholds, input size.
+            intra_threads: Intra-op parallelism threads.
+            inter_threads: Inter-op parallelism threads.
+            warmup_runs:   Dummy runs to warm CPU caches.
         """
-        self.model_path = model_config.path
+        self.model_path    = model_config.path
         self.conf_threshold = model_config.conf_threshold
-        self.nms_threshold = model_config.nms_threshold
+        self.nms_threshold  = model_config.nms_threshold
         self.input_width, self.input_height = model_config.input_size
         self.name = model_config.name
-        
-        # Configuring ONNX Runtime for RPi5
-        sess_options = ort.SessionOptions()
-        sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        sess_options.intra_op_num_threads = intra_threads
-        sess_options.inter_op_num_threads = inter_threads
-        sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
-        sess_options.enable_profiling = False
-        
-        # Creating the session
-        self.session = ort.InferenceSession(
-            self.model_path,
-            sess_options=sess_options,
-            providers=['CPUExecutionProvider']
+
+        # Configure ONNX Runtime session
+        opts = ort.SessionOptions()
+        opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        opts.intra_op_num_threads  = intra_threads
+        opts.inter_op_num_threads  = inter_threads
+        opts.execution_mode        = ort.ExecutionMode.ORT_SEQUENTIAL
+        opts.enable_profiling      = False
+
+        self.session    = ort.InferenceSession(
+            self.model_path, sess_options=opts, providers=["CPUExecutionProvider"]
         )
         self.input_name = self.session.get_inputs()[0].name
-        
-        # Pre-allocating the preprocessing buffer (zero-copy optimization)
+
+        # Pre-allocated inference buffer — avoids per-frame allocation
         self.input_buffer = np.zeros(
-            (1, 3, self.input_height, self.input_width), 
-            dtype=np.float32
+            (1, 3, self.input_height, self.input_width), dtype=np.float32
         )
-        
-        print(f" {self.name} Model loaded: {self.model_path}")
-        
-        # For Warming up the model
+
+        print(f"  ✓ {self.name} loaded: {self.model_path}")
         self._warmup(warmup_runs)
-    
-    def _warmup(self, num_runs: int):
-        """
-        Warming up the model with dummy inferences
-        This initializes CPU caches and ONNX Runtime for stable performance
-        """
-        print(f" Warming up {self.name} model ({num_runs} runs)...", end=" ", flush=True)
-        dummy_input = np.random.rand(1, 3, self.input_height, self.input_width).astype(np.float32)
+
+    # ── Warmup ────────────────────────────────────────────────────────────
+
+    def _warmup(self, num_runs: int) -> None:
+        print(f"  ⟳ Warming up {self.name} ({num_runs} runs)…", end=" ", flush=True)
+        dummy = np.random.rand(
+            1, 3, self.input_height, self.input_width
+        ).astype(np.float32)
         for _ in range(num_runs):
-            self.session.run(None, {self.input_name: dummy_input})
-        print("Done!")
-    
+            self.session.run(None, {self.input_name: dummy})
+        print("done.")
+
+    # ── Preprocessing ─────────────────────────────────────────────────────
+
     def preprocess(self, frame: np.ndarray) -> np.ndarray:
         """
-        Preprocess frame with zero-copy optimization
-        Writes directly into pre-allocated buffer
-        
-        Args:
-            frame: Input frame (HxWxC BGR)
-            
-        Returns:
-            Preprocessed image tensor (1xCxHxW)
+        Resize, normalise, and transpose to NCHW in a pre-allocated buffer.
+        Avoids per-frame memory allocation (zero-copy optimisation).
         """
-        # Resize frame
         img = cv2.resize(frame, (self.input_width, self.input_height))
-        
-        # Normalize and transpose in one operation (faster)
-        img_float = img.astype(np.float32) * (1.0 / 255.0)
-        
-        # Write directly to pre-allocated buffer (zero-copy)
-        # Transpose: HWC -> CHW
-        self.input_buffer[0, 0, :, :] = img_float[:, :, 0]  # B
-        self.input_buffer[0, 1, :, :] = img_float[:, :, 1]  # G
-        self.input_buffer[0, 2, :, :] = img_float[:, :, 2]  # R
-        
+        img_f = img.astype(np.float32) * (1.0 / 255.0)
+
+        # Transpose HWC → CHW directly into buffer
+        self.input_buffer[0, 0] = img_f[:, :, 0]   # B channel
+        self.input_buffer[0, 1] = img_f[:, :, 1]   # G channel
+        self.input_buffer[0, 2] = img_f[:, :, 2]   # R channel
         return self.input_buffer
-    
-    def postprocess(self, outputs: List[np.ndarray], frame_shape: Tuple[int, int]) -> Tuple[List[Tuple[int, int, int, int]], List[float]]:
+
+    # ── Postprocessing ────────────────────────────────────────────────────
+
+    def postprocess(
+        self,
+        outputs:     List[np.ndarray],
+        frame_shape: Tuple[int, int],
+    ) -> Tuple[List[Tuple[int, int, int, int]], List[float]]:
         """
-        Vectorized postprocessing with NMS
+        Vectorised postprocessing with OpenCV NMS.
+
+        Task 4 — NMS implementation:
+            Uses cv2.dnn.NMSBoxes() (C++ backend) instead of any Python
+            loop-based NMS.  This was already the case in the original code.
+
         Args:
-            outputs: Model outputs from ONNX Runtime
-            frame_shape: Original frame shape (height, width)
+            outputs:     Raw ONNX Runtime outputs.
+            frame_shape: Original frame (height, width).
+
         Returns:
-            Tuple of (boxes, scores) where boxes are (x1, y1, x2, y2)
+            (boxes, scores) after confidence filtering and NMS.
+            Boxes are (x1, y1, x2, y2) in pixel coordinates.
         """
         h, w = frame_shape
-        # YOLOv8 output: [1, 84, 8400] or [1, num_classes+4, 8400]
-        predictions = np.squeeze(outputs[0]).T  # [8400, 84] or [8400, 5]
-        # Vectorized confidence filtering
+
+        # YOLOv8 output layout: [1, 84, 8400] → squeeze → transpose → [8400, 84]
+        predictions = np.squeeze(outputs[0]).T
+
         class_scores = predictions[:, 4:]
-        scores = np.max(class_scores, axis=1)
-        mask = scores > self.conf_threshold
-        
+        scores       = np.max(class_scores, axis=1)
+        mask         = scores > self.conf_threshold
+
         if not mask.any():
             return [], []
-        
-        # Filter predictions
+
         filtered = predictions[mask]
-        scores = scores[mask]
-        
-        # Extract box coordinates
-        boxes = filtered[:, :4]
-        
-        # Vectorized scaling to original image size
-        scale_x = w / self.input_width
-        scale_y = h / self.input_height
-        
-        # Converting from center format to corner format and scale
-        x1 = ((boxes[:, 0] - boxes[:, 2] / 2) * scale_x)
-        y1 = ((boxes[:, 1] - boxes[:, 3] / 2) * scale_y)
-        x2 = ((boxes[:, 0] + boxes[:, 2] / 2) * scale_x)
-        y2 = ((boxes[:, 1] + boxes[:, 3] / 2) * scale_y)
-        
-        # Clamping to image boundaries
-        x1 = np.clip(x1, 0, w).astype(np.int32)
-        y1 = np.clip(y1, 0, h).astype(np.int32)
-        x2 = np.clip(x2, 0, w).astype(np.int32)
-        y2 = np.clip(y2, 0, h).astype(np.int32)
-        
+        scores   = scores[mask]
+        boxes    = filtered[:, :4]
+
+        # Scale from model input space to original frame space
+        sx = w / self.input_width
+        sy = h / self.input_height
+
+        # Centre-format → corner-format
+        x1 = np.clip((boxes[:, 0] - boxes[:, 2] / 2) * sx, 0, w).astype(np.int32)
+        y1 = np.clip((boxes[:, 1] - boxes[:, 3] / 2) * sy, 0, h).astype(np.int32)
+        x2 = np.clip((boxes[:, 0] + boxes[:, 2] / 2) * sx, 0, w).astype(np.int32)
+        y2 = np.clip((boxes[:, 1] + boxes[:, 3] / 2) * sy, 0, h).astype(np.int32)
+
         if len(x1) == 0:
             return [], []
-        
-        # Applying NMS to remove duplicate detections
-        # Converting to xywh format for cv2.dnn.NMSBoxes
-        boxes_nms = np.stack([x1, y1, x2 - x1, y2 - y1], axis=1)
-        
-        indices = cv2.dnn.NMSBoxes(
-            boxes_nms.tolist(),
+
+        # ── Task 4: OpenCV NMS (C++ backend, no Python loops) ─────────────
+        boxes_xywh = np.stack([x1, y1, x2 - x1, y2 - y1], axis=1)
+        indices    = cv2.dnn.NMSBoxes(
+            boxes_xywh.tolist(),
             scores.tolist(),
-            score_threshold=self.conf_threshold,
-            nms_threshold=self.nms_threshold
+            score_threshold = self.conf_threshold,
+            nms_threshold   = self.nms_threshold,
         )
-        
+
         if len(indices) == 0:
             return [], []
-        
-        # Flattening indices 
+
         indices = indices.flatten()
-        
-        # Building final results
-        final_boxes = [(x1[i], y1[i], x2[i], y2[i]) for i in indices]
-        final_scores = [scores[i] for i in indices]
-        return final_boxes, final_scores
-    
-    def detect(self, frame: np.ndarray) -> Tuple[List[Tuple[int, int, int, int]], List[float]]:
-        """
-        For running a full detection pipeline on a frame
-        Args:
-            frame: Input frame (HxWxC BGR)
-        Returns:
-            Tuple of (boxes, scores)
-        """
-        # Preprocessing
-        img_data = self.preprocess(frame)
-        
-        # Running inference
-        outputs = self.session.run(None, {self.input_name: img_data})
-        
-        # Postprocessing
-        boxes, scores = self.postprocess(outputs, frame.shape[:2])
-        
+        return (
+            [(x1[i], y1[i], x2[i], y2[i]) for i in indices],
+            [float(scores[i])              for i in indices],
+        )
+
+    # ── Full detect ───────────────────────────────────────────────────────
+
+    def detect(
+        self, frame: np.ndarray
+    ) -> Tuple[List[Tuple[int, int, int, int]], List[float]]:
+        """Run preprocess → inference → postprocess on a single frame."""
+        img_data       = self.preprocess(frame)
+        outputs        = self.session.run(None, {self.input_name: img_data})
+        boxes, scores  = self.postprocess(outputs, frame.shape[:2])
         return boxes, scores
+
     def get_name(self) -> str:
-        """Get model name"""
         return self.name

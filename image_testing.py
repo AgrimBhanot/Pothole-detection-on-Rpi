@@ -5,12 +5,13 @@ import os
 
 # 1. Setup Session
 # On x64 laptops, we don't need the specific ARM threading tweaks
-model_path = "new_model/new_preprocessed_excluded.onnx"
+models = ["new_model/random.onnx","new_model/best.onnx","new_model/Repo1_Model1.onnx","new_model/hf.onnx"]
+model_path = models[3]
 session = ort.InferenceSession(model_path, providers=['CPUExecutionProvider'])
 input_name = session.get_inputs()[0].name
 
 # 2. Path Setup
-image_folder = "test_images"  # Folder where you downloaded images
+image_folder = "test_imgs"  # Folder where you downloaded images
 output_folder = "results"
 os.makedirs(output_folder, exist_ok=True)
 
@@ -22,7 +23,7 @@ for img_name in os.listdir(image_folder):
     
     # Pre-process (must match your calibration logic)
     h, w = orig_frame.shape[:2]
-    img = cv2.resize(orig_frame, (416, 416))
+    img = cv2.resize(orig_frame, (640, 640))
     img_data = img.astype(np.float32) / 255.0
     img_data = np.transpose(img_data, (2, 0, 1))
     img_data = np.expand_dims(img_data, axis=0)
