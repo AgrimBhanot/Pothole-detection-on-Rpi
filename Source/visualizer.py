@@ -40,20 +40,7 @@ class Visualizer:
         general_tracks: list,   # List[tracker.Track]
         pothole_tracks: list,   # List[tracker.Track]
     ) -> np.ndarray:
-        """
-        Draw bounding boxes and persistent IDs for all active tracked objects.
 
-        General (obstacle) tracks are drawn in green; pothole tracks in red.
-        Each box shows:  "<label> #<id>  <score:.2f>"
-
-        Args:
-            frame:          Input BGR frame (modified in-place).
-            general_tracks: Active Track objects from the general detector.
-            pothole_tracks: Active Track objects from the pothole detector.
-
-        Returns:
-            Frame with tracks drawn.
-        """
         for track in general_tracks:
             self._draw_track_box(frame, track, self.color_anomaly)
         for track in pothole_tracks:

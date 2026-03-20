@@ -22,19 +22,11 @@ class OptimizedYOLODetector:
     def __init__(
         self,
         model_config:  ModelConfig,
-        intra_threads: int = 4,
-        inter_threads: int = 2,
+        intra_threads: int = 2, #4,
+        inter_threads: int = 1, #2,
         warmup_runs:   int = 10,
     ) -> None:
-        """
-        Initialise detector with ONNX Runtime optimised for RPi5.
 
-        Args:
-            model_config:  ModelConfig specifying path, thresholds, input size.
-            intra_threads: Intra-op parallelism threads.
-            inter_threads: Inter-op parallelism threads.
-            warmup_runs:   Dummy runs to warm CPU caches.
-        """
         self.model_path    = model_config.path
         self.conf_threshold = model_config.conf_threshold
         self.nms_threshold  = model_config.nms_threshold
@@ -49,9 +41,17 @@ class OptimizedYOLODetector:
         opts.execution_mode        = ort.ExecutionMode.ORT_SEQUENTIAL
         opts.enable_profiling      = False
 
-        self.session    = ort.InferenceSession(
-            self.model_path, sess_options=opts, providers=["CPUExecutionProvider"]
-        )
+        # self.session    = ort.InferenceSession(
+        #     self.model_path, sess_options=opts, providers=["CPUExecutionProvider"]
+        # )
+
+        providers = []
+        available = ort.get_available_providers()
+        if "XNNPACKExecutionProvider" in available:
+            providers.append(("XNNPACKExecutionProvider", {"intra_op_num_threads": str(intra_threads)}))
+            print(f"[{self.name}] Using XNNPACK provider")
+        providers.append("CPUExecutionProvider")
+        self.session = ort.InferenceSession(self.model_path, sess_options=opts, providers=providers)
         self.input_name = self.session.get_inputs()[0].name
 
         # Pre-allocated inference buffer — avoids per-frame allocation
@@ -65,7 +65,7 @@ class OptimizedYOLODetector:
     # ── Warmup ────────────────────────────────────────────────────────────
 
     def _warmup(self, num_runs: int) -> None:
-        print(f"  ⟳ Warming up {self.name} ({num_runs} runs)…", end=" ", flush=True)
+        print(f"   Warming up {self.name} ({num_runs} runs)…", end=" ", flush=True)
         dummy = np.random.rand(
             1, 3, self.input_height, self.input_width
         ).astype(np.float32)
@@ -96,21 +96,7 @@ class OptimizedYOLODetector:
         outputs:     List[np.ndarray],
         frame_shape: Tuple[int, int],
     ) -> Tuple[List[Tuple[int, int, int, int]], List[float]]:
-        """
-        Vectorised postprocessing with OpenCV NMS.
 
-        Task 4 — NMS implementation:
-            Uses cv2.dnn.NMSBoxes() (C++ backend) instead of any Python
-            loop-based NMS.  This was already the case in the original code.
-
-        Args:
-            outputs:     Raw ONNX Runtime outputs.
-            frame_shape: Original frame (height, width).
-
-        Returns:
-            (boxes, scores) after confidence filtering and NMS.
-            Boxes are (x1, y1, x2, y2) in pixel coordinates.
-        """
         h, w = frame_shape
 
         # YOLOv8 output layout: [1, 84, 8400] → squeeze → transpose → [8400, 84]

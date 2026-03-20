@@ -21,10 +21,6 @@ Separates the three compute stages into independent OS processes:
 Queue design (zero-latency):
     maxsize=1  → putting a new item when full discards the old one
                  so the inference / display always sees the latest frame.
-
-Important: worker functions MUST be module-level (not closures) to be
-picklable under the 'spawn' start method.  On Linux the default is 'fork'
-but module-level functions work on both.
 """
 
 import multiprocessing as mp
@@ -60,9 +56,9 @@ class DetectionResult:
     mode_label:       str       # "PERFORMANCE" | "EFFICIENCY"
 
 
-# ---------------------------------------------------------------------------
+# ------------------------------------
 # Module-level worker functions  (picklable for multiprocessing)
-# ---------------------------------------------------------------------------
+# -------------------------------------------------------------------
 
 def _capture_worker(
     camera_src: object,          # "pi_camera" | int | str path
@@ -72,13 +68,7 @@ def _capture_worker(
     capture_q:  mp.Queue,
     running:    mp.Value,        # mp.Value('i')
 ) -> None:
-    """
-    Capture Process worker.
 
-    Creates its own camera instance INSIDE the subprocess so that
-    picamera2 is initialised after forking (picamera2 docs requirement).
-    Drops frames instead of blocking when the capture queue is full.
-    """
     # Import inside worker — safe for both fork and spawn start methods
     from camera import ThreadedCamera
 
@@ -123,17 +113,7 @@ def _inference_worker(
     mode_val:       mp.Value,    # mp.Value('i')  1=PERF, 0=EFF
     max_latency_ms: int,
 ) -> None:
-    """
-    Inference Process worker.
 
-    • Loads all four ONNX detectors via ModelPairManager at startup.
-      (ONNX sessions must be created inside the process — not pickled.)
-    • Alternates between general and pothole detectors each inference frame.
-    • Updates EMA FPS and checks hysteresis switching every ~1 second.
-    • Drops frames whose queue latency exceeds max_latency_ms.
-    • Replaces stale detection results (drop-old strategy) so the display
-      process always sees the most recent inference output.
-    """
     from config import config
     from model_manager import ModelPairManager, ModelMode
 
@@ -251,22 +231,7 @@ def _put_sentinel(q: mp.Queue) -> None:
 # ---------------------------------------------------------------------------
 
 class DetectionPipeline:
-    """
-    Manages the two background processes and their inter-process queues.
 
-    Usage::
-
-        pipeline = DetectionPipeline()
-        pipeline.start(camera_src="pi_camera", width=640, height=480, fps=30)
-
-        while True:
-            result = pipeline.get_result(timeout=0.05)
-            if result is None:
-                continue
-            # ... render result.frame ...
-
-        pipeline.stop()
-    """
 
     def __init__(
         self,
@@ -354,14 +319,7 @@ class DetectionPipeline:
     # ── Data access ────────────────────────────────────────────────────────
 
     def get_result(self, timeout: float = 0.05) -> Optional[DetectionResult]:
-        """
-        Non-blocking fetch of the latest detection result.
 
-        Returns:
-            A DetectionResult, or ``None`` on timeout / empty queue.
-            Returns ``None`` (no sentinel re-raise) — callers should check
-            whether the inference process has exited separately.
-        """
         try:
             item = self.detection_q.get(timeout=timeout)
             # ``None`` is the end-of-stream sentinel

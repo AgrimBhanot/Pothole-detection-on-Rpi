@@ -23,23 +23,25 @@ class SystemConfig:
     """System-wide configuration."""
 
     # ── Model paths — Performance pair (FP32 / unquantized) ──────────────
-    ANOMALY_MODEL_PATH: str = "new_model/Model2_General.onnx"
-    POTHOLE_MODEL_PATH: str = "new_model/Model1_Pothole.onnx"
+    ANOMALY_MODEL_PATH: str = "new_model/best.onnx"
+    POTHOLE_MODEL_PATH: str = "new_model/random.onnx"
 
     # ── Model paths — Efficiency pair (INT8 quantized) ───────────────────
     # If these files are absent, Efficiency mode will reuse the FP32 pair.
-    ANOMALY_MODEL_QUANT_PATH: str = "new_model/Model2_General_quant.onnx"
-    POTHOLE_MODEL_QUANT_PATH: str = "new_model/Model1_Pothole_quant.onnx"
+    ANOMALY_MODEL_QUANT_PATH: str = "new_model/Model2_General.onnx"
+    POTHOLE_MODEL_QUANT_PATH: str = "new_model/Model1_Pothole.onnx"
 
     # ── Detection thresholds ──────────────────────────────────────────────
     ANOMALY_CONF_THRESHOLD: float  = 0.7
     POTHOLE_CONF_THRESHOLD: float  = 0.7
     HIGH_CONF_SAVE_THRESHOLD: float = 0.75
-    NMS_THRESHOLD: float            = 0.45
+    NMS_THRESHOLD: float            = 0.3
 
     # ── ONNX Runtime thread settings for RPi5 (4-core) ───────────────────
-    INTRA_OP_NUM_THREADS: int = 4
-    INTER_OP_NUM_THREADS: int = 2
+    INTRA_OP_NUM_THREADS_EFF: int = 2
+    INTER_OP_NUM_THREADS_EFF: int = 1
+    INTRA_OP_NUM_THREADS_PERF: int = 4
+    INTER_OP_NUM_THREADS_PERF: int = 1
     NUM_WARMUP_RUNS: int      = 10
 
     # ── Pipeline / queue settings ─────────────────────────────────────────
@@ -61,16 +63,16 @@ class SystemConfig:
     #   The deliberate gap between down (8/75) and up (12/65) is the
     #   hysteresis dead-band that prevents mode oscillation.
     #
-    FPS_DOWNGRADE_THRESHOLD:  float = 8.0
-    FPS_UPGRADE_THRESHOLD:    float = 12.0
+    FPS_DOWNGRADE_THRESHOLD:  float = 4.0 #8.0
+    FPS_UPGRADE_THRESHOLD:    float = 7.0 #12.0
     TEMP_DOWNGRADE_THRESHOLD: float = 75.0   # °C
     TEMP_UPGRADE_THRESHOLD:   float = 65.0   # °C
 
     # Cooldown between successive switches (seconds)
-    SWITCH_COOLDOWN_SECONDS: float = 2.0
+    SWITCH_COOLDOWN_SECONDS: float = 10.0 #2.0
 
     # EMA smoothing factor for FPS (lower α → slower reaction, less noise)
-    FPS_EMA_ALPHA: float = 0.2
+    FPS_EMA_ALPHA: float = 0.1 #0.2
 
     # ── ByteTrack tracker settings ────────────────────────────────────────
     TRACKER_MAX_LOST_FRAMES:     int   = 15    # Frames before a lost track is removed

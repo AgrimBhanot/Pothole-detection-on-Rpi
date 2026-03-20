@@ -7,23 +7,6 @@ Integrates all four upgrade tasks:
   Task 2  ByteTrack object tracking      (handled in this display loop)
   Task 3  True multiprocessing pipeline  (DetectionPipeline)
   Task 4  OpenCV NMS                     (already in detector.py — unchanged)
-
-Architecture
-------------
-  ┌─────────────────┐   FrameData   ┌──────────────────────┐
-  │  CaptureProcess │ ─────────── ▶ │   InferenceProcess   │
-  │  (camera/video) │   (Queue 1)   │  ModelPairManager    │
-  └─────────────────┘               │  4 ONNX models       │
-                                    │  Hysteresis switch   │
-                                    └──────────────────────┘
-                                           │ DetectionResult
-                                           │   (Queue 2)
-                                    ┌──────▼──────────────────┐
-                                    │  Main Process (display) │
-                                    │  ByteTracker × 2        │
-                                    │  Visualizer             │
-                                    │  DetectionSaver         │
-                                    └─────────────────────────┘
 """
 
 import cv2
@@ -38,13 +21,7 @@ from visualizer import Visualizer, DetectionSaver
 
 
 class RPi5DetectionSystem:
-    """
-    Top-level controller.
 
-    All heavy lifting (model loading, inference, frame capture) runs in
-    separate processes.  This class owns the display loop, the two
-    ByteTrackers, and the visualiser.
-    """
 
     def __init__(self, save_detections: bool = True) -> None:
         print("=" * 60)
@@ -96,7 +73,7 @@ class RPi5DetectionSystem:
 
     def run_camera(self, camera_id: int = 0) -> None:
         """Start live detection from the Pi camera or a USB webcam."""
-        print(f"\n▶ Starting camera detection (ID: {camera_id})")
+        print(f"\nStarting camera detection (ID: {camera_id})")
         src = "pi_camera" if camera_id == 0 else camera_id
         self._run(
             camera_src = src,
@@ -108,7 +85,7 @@ class RPi5DetectionSystem:
 
     def run_video(self, video_path: str) -> None:
         """Start detection on a video file."""
-        print(f"\n▶ Starting video detection: {video_path}")
+        print(f"\n Starting video detection: {video_path}")
         self._run(
             camera_src = video_path,
             width      = config.CAMERA_WIDTH,
@@ -127,10 +104,7 @@ class RPi5DetectionSystem:
         fps:        int,
         is_video:   bool,
     ) -> None:
-        """
-        Build the pipeline, start worker processes, then run the display loop
-        in the main process (cv2.imshow must be on the main thread).
-        """
+
         print("\nControls:")
         print("  'q' — Quit")
         print("  'p' — Pause / Resume")
@@ -214,7 +188,7 @@ class RPi5DetectionSystem:
                     break
                 elif key == ord("p"):
                     paused = False
-                    print("  ▶ Resumed")
+                    print(" Resumed")
                 continue
 
             # ── Update the appropriate ByteTracker ─────────────────────────
@@ -409,7 +383,7 @@ Examples:
         else:
             system.run_video(video_path=args.source)
     except Exception as exc:
-        print(f"✗ Runtime error: {exc}")
+        print(f"Runtime error: {exc}")
         import traceback
         traceback.print_exc()
         sys.exit(1)

@@ -42,7 +42,7 @@ class ThreadedCamera:
         
         self.frame_count = 0
         self.start_time = time.time()
-        print(f"✓ Camera initialized: {width}x{height} @ {fps}fps")
+        print(f"Camera initialized: {width}x{height} @ {fps}fps")
 
     def _update(self):
         while self.running:

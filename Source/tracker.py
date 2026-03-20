@@ -10,20 +10,10 @@ Use BOTH high-confidence AND low-confidence detections for association,
 but only create NEW tracks from high-confidence detections.
 
 This prevents two common failure modes:
-  • A real object whose score drops momentarily (occlusion, lighting) would
+  A real object whose score drops momentarily (occlusion, lighting) would
     be lost by a naïve tracker — ByteTrack keeps it via the low-conf stage.
-  • A noise detection would start a spurious track — ByteTrack avoids this
+  A noise detection would start a spurious track — ByteTrack avoids this
     by gating track creation on the high-confidence tier.
-
-Reference
----------
-Zhang et al. "ByteTrack: Multi-Object Tracking by Associating Every
-Detection Box" — ECCV 2022.
-
-RPi5 adaptations
------------------
-• No Kalman filter (too CPU-heavy for Pi); greedy IoU matching instead.
-• NumPy vectorised IoU matrix; greedy O(min(T,D)) passes.
 """
 
 import time
