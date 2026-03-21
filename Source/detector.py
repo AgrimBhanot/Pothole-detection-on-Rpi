@@ -62,7 +62,7 @@ class OptimizedYOLODetector:
         print(f"  ✓ {self.name} loaded: {self.model_path}")
         self._warmup(warmup_runs)
 
-    # ── Warmup ────────────────────────────────────────────────────────────
+    # ~~ Warmup ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     def _warmup(self, num_runs: int) -> None:
         print(f"   Warming up {self.name} ({num_runs} runs)…", end=" ", flush=True)
@@ -73,7 +73,7 @@ class OptimizedYOLODetector:
             self.session.run(None, {self.input_name: dummy})
         print("done.")
 
-    # ── Preprocessing ─────────────────────────────────────────────────────
+    # ~~ Preprocessing ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     def preprocess(self, frame: np.ndarray) -> np.ndarray:
         """
@@ -89,7 +89,7 @@ class OptimizedYOLODetector:
         self.input_buffer[0, 2] = img_f[:, :, 2]   # R channel
         return self.input_buffer
 
-    # ── Postprocessing ────────────────────────────────────────────────────
+    # ~~ Postprocessing ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     def postprocess(
         self,
@@ -126,7 +126,7 @@ class OptimizedYOLODetector:
         if len(x1) == 0:
             return [], []
 
-        # ── Task 4: OpenCV NMS (C++ backend, no Python loops) ─────────────
+        # ~~ Task 4: OpenCV NMS (C++ backend, no Python loops) ~~~~~~~~~~~~~
         boxes_xywh = np.stack([x1, y1, x2 - x1, y2 - y1], axis=1)
         indices    = cv2.dnn.NMSBoxes(
             boxes_xywh.tolist(),
@@ -144,7 +144,7 @@ class OptimizedYOLODetector:
             [float(scores[i])              for i in indices],
         )
 
-    # ── Full detect ───────────────────────────────────────────────────────
+    # ~~ Full detect ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     def detect(
         self, frame: np.ndarray

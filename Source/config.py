@@ -22,35 +22,35 @@ class ModelConfig:
 class SystemConfig:
     """System-wide configuration."""
 
-    # ── Model paths — Performance pair (FP32 / unquantized) ──────────────
-    ANOMALY_MODEL_PATH: str = "new_model/best.onnx"
-    POTHOLE_MODEL_PATH: str = "new_model/random.onnx"
+    # Model paths — Performance pair (FP32 / unquantized) 
+    ANOMALY_MODEL_PATH: str = "new_model/General_FP32.onnx"
+    POTHOLE_MODEL_PATH: str = "new_model/Pothole_FP32.onnx"
 
-    # ── Model paths — Efficiency pair (INT8 quantized) ───────────────────
+    # ~~ Model paths — Efficiency pair (INT8 quantized) ~~~~~~~~~~~~~~~~~~~
     # If these files are absent, Efficiency mode will reuse the FP32 pair.
     ANOMALY_MODEL_QUANT_PATH: str = "new_model/Model2_General.onnx"
     POTHOLE_MODEL_QUANT_PATH: str = "new_model/Model1_Pothole.onnx"
 
-    # ── Detection thresholds ──────────────────────────────────────────────
+    # ~~ Detection thresholds ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     ANOMALY_CONF_THRESHOLD: float  = 0.7
     POTHOLE_CONF_THRESHOLD: float  = 0.7
     HIGH_CONF_SAVE_THRESHOLD: float = 0.75
     NMS_THRESHOLD: float            = 0.3
 
-    # ── ONNX Runtime thread settings for RPi5 (4-core) ───────────────────
+    # ~~ ONNX Runtime thread settings for RPi5 (4-core) ~~~~~~~~~~~~~~~~~~~
     INTRA_OP_NUM_THREADS_EFF: int = 2
     INTER_OP_NUM_THREADS_EFF: int = 1
     INTRA_OP_NUM_THREADS_PERF: int = 4
     INTER_OP_NUM_THREADS_PERF: int = 1
     NUM_WARMUP_RUNS: int      = 10
 
-    # ── Pipeline / queue settings ─────────────────────────────────────────
+    # ~~ Pipeline / queue settings ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     # Queue size of 1 → always drop stale frames, keep only the latest
     FRAME_QUEUE_SIZE: int  = 1
     MAX_LATENCY_MS: int    = 200   # Drop frames older than this
     USE_ALTERNATE_MODELS: bool = True
 
-    # ── Adaptive model-pair switching — hysteresis thresholds ─────────────
+    # ~~ Adaptive model-pair switching — hysteresis thresholds ~~~~~~~~~~~~~
     #
     #   DOWNGRADE  PERFORMANCE → EFFICIENCY  when:
     #       EMA FPS  < FPS_DOWNGRADE_THRESHOLD   (8 fps)
@@ -74,28 +74,28 @@ class SystemConfig:
     # EMA smoothing factor for FPS (lower α → slower reaction, less noise)
     FPS_EMA_ALPHA: float = 0.1 #0.2
 
-    # ── ByteTrack tracker settings ────────────────────────────────────────
+    # ~~ ByteTrack tracker settings ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     TRACKER_MAX_LOST_FRAMES:     int   = 15    # Frames before a lost track is removed
     TRACKER_IOU_THRESHOLD:       float = 0.35  # Min IoU for a valid match
     TRACKER_HIGH_CONF_THRESHOLD: float = 0.60  # High-confidence tier boundary
     TRACKER_LOW_CONF_THRESHOLD:  float = 0.30  # Low-confidence tier boundary
 
-    # ── Camera settings ───────────────────────────────────────────────────
+    # ~~ Camera settings ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     CAMERA_WIDTH:  int = 640
     CAMERA_HEIGHT: int = 480
     CAMERA_FPS:    int = 30
 
-    # ── Output / display settings ─────────────────────────────────────────
+    # ~~ Output / display settings ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     SAVE_DETECTIONS: bool = True
     OUTPUT_DIR: str       = "detections"
     DISPLAY_FPS: bool     = True
     SHOW_TIMESTAMPS: bool = True
 
-    # ── Video playback ────────────────────────────────────────────────────
+    # ~~ Video playback ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     VIDEO_PROCESS_ALL_FRAMES: bool = True
     VIDEO_DISPLAY_SPEED: str       = "original"
 
-    # ── Colour schemes (BGR for OpenCV) ───────────────────────────────────
+    # ~~ Colour schemes (BGR for OpenCV) ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     COLOR_ANOMALY:  Tuple[int, int, int] = (0, 255, 0)    # Green
     COLOR_POTHOLE:  Tuple[int, int, int] = (0, 0, 255)    # Red
     COLOR_TEXT_BG:  Tuple[int, int, int] = (0, 0, 0)      # Black
@@ -104,7 +104,7 @@ class SystemConfig:
     def __post_init__(self):
         os.makedirs(self.OUTPUT_DIR, exist_ok=True)
 
-    # ── ModelConfig factories ─────────────────────────────────────────────
+    # ~~ ModelConfig factories ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     def get_anomaly_config(self) -> ModelConfig:
         """FP32 general obstacle detector config."""

@@ -258,7 +258,7 @@ class DetectionPipeline:
 
         print("[Pipeline] Initialised.")
 
-    # ── Lifecycle ──────────────────────────────────────────────────────────
+    # ~~ Lifecycle ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     def start(
         self,
@@ -316,7 +316,7 @@ class DetectionPipeline:
 
         print("[Pipeline] Stopped.")
 
-    # ── Data access ────────────────────────────────────────────────────────
+    # ~~ Data access ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     def get_result(self, timeout: float = 0.05) -> Optional[DetectionResult]:
 

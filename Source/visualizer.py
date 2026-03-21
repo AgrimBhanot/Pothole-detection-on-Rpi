@@ -32,7 +32,7 @@ class Visualizer:
         self._fps_buf:      list = []
         self._fps_buf_size: int  = 30
 
-    # ── Track rendering (primary method for tracked objects) ─────────────
+    # ~~ Track rendering (primary method for tracked objects) ~~~~~~~~~~~~~
 
     def draw_tracks(
         self,
@@ -68,7 +68,7 @@ class Visualizer:
             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2,
         )
 
-    # ── Legacy method — kept for backward compatibility ───────────────────
+    # ~~ Legacy method — kept for backward compatibility ~~~~~~~~~~~~~~~~~~~
 
     def draw_detections(
         self,
@@ -94,7 +94,7 @@ class Visualizer:
             )
         return frame
 
-    # ── Mode overlay ──────────────────────────────────────────────────────
+    # ~~ Mode overlay ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     def add_mode_overlay(
         self,
@@ -119,7 +119,7 @@ class Visualizer:
         cv2.putText(frame, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
         return frame
 
-    # ── FPS overlay ───────────────────────────────────────────────────────
+    # ~~ FPS overlay ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     def add_fps_overlay(self, frame: np.ndarray, fps: float) -> np.ndarray:
         if not self.show_fps:
@@ -139,7 +139,7 @@ class Visualizer:
         )
         return frame
 
-    # ── Info overlay ──────────────────────────────────────────────────────
+    # ~~ Info overlay ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     def add_info_overlay(
         self,
@@ -158,7 +158,7 @@ class Visualizer:
         )
         return frame
 
-    # ── Timestamp overlay ─────────────────────────────────────────────────
+    # ~~ Timestamp overlay ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     def add_timestamp_overlay(
         self, frame: np.ndarray, timestamp: float

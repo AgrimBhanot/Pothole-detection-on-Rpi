@@ -57,7 +57,7 @@ class Track:
     label:          str = "Object"              # e.g. "Obstacle" | "Pothole"
     lost_frames:    int = 0                     # Consecutive unmatched frames
 
-    # ── Mutations ────────────────────────────────────────────────────────
+    # ~~ Mutations ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     def update(
         self,
@@ -78,7 +78,7 @@ class Track:
         self.state        = TrackState.LOST
         self.lost_frames += 1
 
-    # ── Properties ───────────────────────────────────────────────────────
+    # ~~ Properties ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     @property
     def duration(self) -> float:
@@ -134,7 +134,7 @@ class ByteTracker:
         self._tracks:  List[Track] = []
         self._next_id: int         = 1
 
-    # ── Public API ────────────────────────────────────────────────────────
+    # ~~ Public API ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     def update(
         self,
@@ -225,7 +225,7 @@ class ByteTracker:
         self._tracks  = []
         self._next_id = 1
 
-    # ── Internal helpers ──────────────────────────────────────────────────
+    # ~~ Internal helpers ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     @staticmethod
     def _iou(

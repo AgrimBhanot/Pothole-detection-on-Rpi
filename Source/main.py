@@ -28,7 +28,7 @@ class RPi5DetectionSystem:
         print("  RPi5 Object Detection System  (v2 — multiprocessing)")
         print("=" * 60)
 
-        # ── Visualiser ────────────────────────────────────────────────────
+        # ~~ Visualiser ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         print("\n[1/4] Initialising visualiser…")
         self.visualizer = Visualizer(
             color_anomaly  = config.COLOR_ANOMALY,
@@ -37,7 +37,7 @@ class RPi5DetectionSystem:
             show_timestamp = config.SHOW_TIMESTAMPS,
         )
 
-        # ── Detection saver ───────────────────────────────────────────────
+        # ~~ Detection saver ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         print("[2/4] Initialising detection saver…")
         self.saver: DetectionSaver | None = None
         if save_detections:
@@ -46,7 +46,7 @@ class RPi5DetectionSystem:
                 high_conf_threshold = config.HIGH_CONF_SAVE_THRESHOLD,
             )
 
-        # ── ByteTrackers — one per model type ─────────────────────────────
+        # ~~ ByteTrackers — one per model type ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         print("[3/4] Initialising ByteTrackers…")
         self.general_tracker = ByteTracker(
             label               = "Obstacle",
@@ -63,13 +63,13 @@ class RPi5DetectionSystem:
             low_conf_threshold  = config.TRACKER_LOW_CONF_THRESHOLD,
         )
 
-        # ── Multiprocessing pipeline (workers started in run_*) ───────────
+        # ~~ Multiprocessing pipeline (workers started in run_*) ~~~~~~~~~~~
         print("[4/4] Pipeline ready (workers start on run).")
         self.pipeline: DetectionPipeline | None = None
 
         print("\n✓ System initialised — call run_camera() or run_video()\n")
 
-    # ── Entry points ──────────────────────────────────────────────────────
+    # ~~ Entry points ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     def run_camera(self, camera_id: int = 0) -> None:
         """Start live detection from the Pi camera or a USB webcam."""
@@ -94,7 +94,7 @@ class RPi5DetectionSystem:
             is_video   = True,
         )
 
-    # ── Core run method ───────────────────────────────────────────────────
+    # ~~ Core run method ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     def _run(
         self,
@@ -152,7 +152,7 @@ class RPi5DetectionSystem:
         pothole_tracks: list = []
 
         while True:
-            # ── Check for end-of-stream / process death ────────────────────
+            # ~~ Check for end-of-stream / process death ~~~~~~~~~~~~~~~~~~~~
             if not self.pipeline.is_alive():
                 # Workers may have finished (e.g. end of video)
                 # Drain any remaining results before exiting
@@ -191,7 +191,7 @@ class RPi5DetectionSystem:
                     print(" Resumed")
                 continue
 
-            # ── Update the appropriate ByteTracker ─────────────────────────
+            # ~~ Update the appropriate ByteTracker ~~~~~~~~~~~~~~~~~~~~~~~~~
             #
             # The inference process alternates models each frame:
             #   is_pothole_frame = True  → pothole model ran
@@ -211,13 +211,13 @@ class RPi5DetectionSystem:
             last_result  = result
             frame_count += 1
 
-            # ── Render and display ─────────────────────────────────────────
+            # ~~ Render and display ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
             display_frame = self._show_frame(
                 result, general_tracks, pothole_tracks,
                 current_fps, frame_count,
             )
 
-            # ── Save high-confidence detections ───────────────────────────
+            # ~~ Save high-confidence detections ~~~~~~~~~~~~~~~~~~~~~~~~~~~
             if self.saver and result.scores:
                 self.saver.save_detection(
                     display_frame,
@@ -227,7 +227,7 @@ class RPi5DetectionSystem:
                     result.timestamp,
                 )
 
-            # ── FPS calculation ────────────────────────────────────────────
+            # ~~ FPS calculation ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
             fps_frames += 1
             elapsed     = time.time() - fps_start
             if elapsed >= 1.0:
@@ -240,7 +240,7 @@ class RPi5DetectionSystem:
                     result.mode_label,
                 )
 
-            # ── Key handling ──────────────────────────────────────────────
+            # ~~ Key handling ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
             key = cv2.waitKey(1) & 0xFF
             if key == ord("q"):
                 print("\n✓ Stopped by user.")
@@ -253,7 +253,7 @@ class RPi5DetectionSystem:
                 cv2.imwrite(path, display_frame)
                 print(f"  💾 Saved: {path}")
 
-    # ── Rendering helper ──────────────────────────────────────────────────
+    # ~~ Rendering helper ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     def _show_frame(
         self,
@@ -283,7 +283,7 @@ class RPi5DetectionSystem:
         cv2.imshow("RPi5 Object Detection", frame)
         return frame
 
-    # ── Logging ───────────────────────────────────────────────────────────
+    # ~~ Logging ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     @staticmethod
     def _print_stats(fps, frame_count, n_tracks, mode):
@@ -293,7 +293,7 @@ class RPi5DetectionSystem:
             f"Tracked: {n_tracks} | Mode: {mode}{save_info}"
         )
 
-    # ── Cleanup ───────────────────────────────────────────────────────────
+    # ~~ Cleanup ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     def _cleanup(self) -> None:
         print("\n" + "=" * 60)

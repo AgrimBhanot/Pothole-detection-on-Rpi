@@ -1,372 +1,386 @@
-# RPi5 Object Detection System
+# RPi5 Real-Time Object Detection System
 
-**High-performance object detection optimized for Raspberry Pi 5**
+**Production-grade dual-model object detection pipeline, optimized for Raspberry Pi 5.**
 
-Dual-model system with multiprocessing, zero-copy operations, and advanced optimizations for real-time inference.
-
----
-
-## 🚀 Features
-
-- **Dual Model Support**: Alternates between Anomaly Detection and Pothole Detection models
-- **Optimized for RPi5**: 
-  - Vectorized NumPy operations
-  - Zero-copy preprocessing
-  - NMS for duplicate removal
-  - ONNX Runtime optimizations
-  - Model warmup for consistent performance
-- **Threaded Camera Capture**: Prevents buffer lag
-- **Async Detection Saving**: Background thread for high-confidence detections saving WITH TIME-STAMPS (>0.75)
-- **Real-time Visualization**:
-  - Live FPS display
-  - Timestamp overlay
-  - Detection count
-  - Model name indicator
-- **Smart Frame Management**: Drops old frames to maintain low latency
+Runs two YOLO models (general anomaly + pothole) in a true multiprocessing architecture with adaptive model-pair switching, ByteTrack object tracking, hardware-accelerated NMS, and a full performance monitoring stack.
 
 ---
 
-## 📁 Project Structure
+## What Was Built — v2 Upgrades at a Glance
+
+| Feature | Details |
+|---------|---------|
+| **True multiprocessing pipeline** | 3 separate OS processes, each on its own CPU cores — bypasses Python GIL |
+| **Adaptive hysteresis model switching** | Auto-switches between FP32 and INT8 model pairs based on EMA FPS + CPU temperature |
+| **ByteTrack object tracking** | Persistent object IDs across frames, two-stage IoU matching, re-identification |
+| **OpenCV hardware-accelerated NMS** | `cv2.dnn.NMSBoxes()` — C++ vectorized, replaces Python NMS loop |
+| **Lazy model loading** | Only the active model pair is in RAM — halves memory pressure |
+| **Drop-frame queuing** | `mp.Queue(maxsize=1)` with drop-old strategy — zero backlog, always latest frame |
+| **Latency guard** | Frames older than 200 ms are automatically discarded |
+| **EMA FPS smoothing** | α=0.1 exponential moving average — immune to single-frame GIL pauses |
+| **Thermal management** | Live sysfs temperature read, `vcgencmd` throttle detection |
+| **INT8 quantization tooling** | Calibration script with per-layer exclusion control |
+
+---
+
+## Features
+
+### Core Detection
+- **Dual YOLO model support** — alternates between general anomaly and pothole detector every frame
+- **Confidence thresholding** — configurable per model (default 0.70)
+- **High-confidence saving** — detections above 0.75 saved to disk with full timestamps
+- **Bounding boxes** — color-coded by model type (green = anomaly, red = pothole)
+
+### Multiprocessing Pipeline
+- **3 OS processes** — `CaptureProcess`, `InferenceProcess`, `MainProcess` run in true parallel on separate CPU cores
+- **`mp.Queue(maxsize=1)`** — each inter-process queue holds exactly 1 item; producer drops the old item and inserts the new one on overflow, so the consumer always sees the latest data and never builds a backlog
+- **`mp.Value`** — shared memory integers for stop signal (`running`) and current model mode (`mode_val`); zero-copy, no serialization, instant read
+- **Module-level worker functions** — `_capture_worker` and `_inference_worker` defined at module level so they are picklable for `mp.Process`
+- **Daemon processes** — both child processes are `daemon=True`; they die automatically if the main process exits
+
+### Adaptive Model-Pair Switching
+- **Two model pairs** — PERFORMANCE (FP32, full precision) and EFFICIENCY (INT8 quantized)
+- **Lazy loading** — only the active pair's ONNX sessions are in RAM; switching frees old sessions before loading new ones
+- **EMA FPS smoothing** — `α = 0.1`; each new sample contributes 10% to the running average, preventing single slow frames from triggering a switch
+- **Hysteresis dead-band** — separate downgrade (FPS < 4.0 or temp > 75 °C) and upgrade (FPS > 7.0 and temp < 65 °C) thresholds; the 3 FPS and 10 °C gaps prevent oscillation
+- **Cooldown** — 10-second minimum between any two successive switches using `time.monotonic()`
+- **Graceful degradation** — if INT8 weights are absent, efficiency mode silently reuses the FP32 pair
+
+### ByteTrack Object Tracking
+- **Persistent IDs** — every detected object gets a unique integer ID that persists across frames
+- **Two-stage matching** — Stage 1: high-confidence detections (≥ 0.60) matched to active tracks by IoU; Stage 2: low-confidence detections (0.30–0.60) matched to remaining active tracks; Stage 3: re-identification against lost tracks; Stage 4: new track birth
+- **Re-identification** — tracks held for 15 frames after going lost before purge, allowing objects to re-appear
+- **Lifecycle logging** — on purge: `[Tracker] Encountered Pothole #3 | Duration: 4.2s | Max Confidence: 0.87`
+- **Two independent trackers** — one for the general model, one for the pothole model, routed by `is_pothole_frame` flag
+
+### Inference Optimizations
+- **ONNX Runtime tuning** — `ORT_ENABLE_ALL` graph optimization, `ORT_SEQUENTIAL` execution mode, `intra_op_num_threads=2`, `inter_op_num_threads=1`
+- **Thread affinity** — ONNX intra-op threads occupy Cores 1+2; capture on Core 0; display on Core 3; no process fights another for cores
+- **Model warmup** — 10 dummy inferences on session creation to warm CPU instruction and data caches before live use
+- **Alternating model schedule** — frame N runs general detector, frame N+1 runs pothole detector; one ONNX session per frame, halving per-frame compute
+- **Vectorized pre/postprocessing** — NumPy operations throughout; zero-copy input buffer allocation
+- **`cv2.dnn.NMSBoxes()`** — hardware-accelerated C++ NMS with `conf_threshold=0.70`, `nms_threshold=0.45`
+
+### Camera & Capture
+- **`ThreadedCamera`** — camera read loop runs on a daemon thread; `cam.read()` is always non-blocking, returns the latest frame instantly
+- **`threading.Lock`** — protects `self.frame` between the capture thread and the caller
+- **picamera2 support** — CSI camera initialised inside the capture subprocess (picamera2 requirement post-fork)
+- **Video file fallback** — `VideoCapture` subclass supports any OpenCV-compatible video source
+
+### Performance Monitoring
+- **`PerformanceMonitor`** — rolling 30-sample deque for FPS (current, avg, min, max), inference time (ms), CPU %, RAM %
+- **Temperature** — reads `/sys/class/thermal/thermal_zone0/temp` via sysfs
+- **Throttle detection** — `vcgencmd get_throttled` reports Pi firmware clock-speed reductions
+- **`BackgroundMonitor`** — `psutil.cpu_percent(interval=0.1)` runs on a daemon thread (it blocks for 100 ms per sample); main loop is never stalled
+- **`save_report()`** — writes all metrics to a text file for post-run analysis
+
+### INT8 Quantization Tooling
+- **`Preprocessing.py`** — preprocesses the ONNX model graph before quantization (operator fusion, layout optimization)
+- **`calibrate_and_exculded_Quantization.py`** — runs static INT8 calibration with a calibration dataset; supports per-layer exclusion so sensitive layers (e.g. detection head) can stay in FP32
+- **`image_testing.py`** — validates model accuracy on a set of test images before/after quantization
+
+### Visualization
+- **`draw_tracks()`** — renders bounding boxes with persistent track IDs and confidence scores
+- **`add_mode_overlay()`** — PERFORMANCE (cyan) / EFFICIENCY (yellow) badge in bottom-right corner
+- **FPS overlay** — live FPS in top-left
+- **Timestamp overlay** — wall-clock time on every frame
+- **Detection count** — total detections this frame
+- **Model name indicator** — shows which model ran on the current frame
+- **High-confidence save** — `DetectionSaver` runs on a background thread; saves `ModelName_YYYYMMDD_HHMMSS_microseconds_confidence.jpg`
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        Raspberry Pi 5  (4× Cortex-A76)                  │
+│                                                                         │
+│  Core 0                 Core 1 + 2               Core 3                 │
+│  ┌──────────────┐       ┌──────────────────┐     ┌──────────────────┐   │
+│  │CaptureProcess│       │InferenceProcess  │     │MainProcess       │   │
+│  │              │       │                  │     │                  │   │
+│  │ ThreadedCam  │──Q1──▶│ ModelPairManager │─Q2─▶│ ByteTracker ×2   │   │
+│  │ FrameData    │       │ Alternating mods │     │ Visualizer       │   │
+│  │ drop-old     │       │ Hysteresis check │     │ DetectionSaver   │   │
+│  └──────────────┘       │ EMA FPS update   │     │PerformanceMonitor│   │
+│                         └──────────────────┘     └──────────────────┘   │
+│                                                                         │
+│  Q1, Q2 = mp.Queue(maxsize=1)  — drop-old on overflow                   │
+│  mp.Value: running (stop signal) · mode_val (PERF/EFF)                  │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Project Structure
 
 ```
 .
-├── new_model/                #Saves all the models
-│   ├── best_preprocessed.onnx
-│   ├── best.onnx
-│   ├── best.pt
-│   ├── Model1_Pothole.onnx    #Main Pothole model in use
-│   └── Model2_General.onnx    #General Model in use
+├── Model_modification/
+│   ├── calibrate_and_exculded_Quantization.py  # INT8 calibration with per-layer exclusion
+│   ├── image_testing.py                         # Pre/post-quantization accuracy validation
+│   └── Preprocessing.py                         # ONNX graph preprocessing before quantization
+│
+├── new_model/                                   # Model weights 
+│   ├── best.onnx                                # FP32 general model (dev/test)
+│   ├── best.pt                                  # PyTorch source weights
+│   ├── Model1_Pothole.onnx                      # FP32 pothole detector (production)
+│   └── Model2_General.onnx                      # FP32 general anomaly detector (production)
 │
 ├── Source/
-│   ├── __pycache__/
-│   ├── camera.py              # Threaded camera capture
-│   ├── config.py              # Centralized configuration
-│   ├── detector.py            # Optimized YOLO detector class
-│   ├── main.py                # Main application
-│   ├── monitor.py             # System/resource monitoring
-│   ├── pipeline.py            # Multiprocessing pipeline (advanced)
-│   ├── test_system.py         # System testing utilities
-│   └── visualizer.py          # Drawing and saving utilities
+│   ├── camera.py          # ThreadedCamera — non-blocking capture with daemon thread
+│   ├── config.py          # Centralized configuration — all tunable parameters
+│   ├── detector.py        # OptimizedYOLODetector — ONNX Runtime + OpenCV NMS
+│   ├── main.py            # Entry point — wires pipeline, trackers, visualizer
+│   ├── model_manager.py   # ModelPairManager — lazy loading, hysteresis switching
+│   ├── monitor.py         # PerformanceMonitor + BackgroundMonitor
+│   ├── pipeline.py        # DetectionPipeline — 3-process mp architecture
+│   ├── test_system.py     # Unit + integration tests for all components
+│   ├── tracker.py         # ByteTracker — two-stage IoU matching, re-ID
+│   └── visualizer.py      # draw_tracks, add_mode_overlay, DetectionSaver
 │
-├── calibrate_and_excluded_Quantization.py # Quantization to INT8 with exculded layers
-├── image_testing.py           # Image-based testing script
-├── Preprocessing.py           # Model preprocessing before Quantization
 ├── .gitignore
 ├── README.md
-├── requirements.txt           # Python dependencies
-└── setup.sh                   # Setup script
+├── requirements.txt
+└── setup.sh
 ```
 
 ---
 
-## 🔧 Installation
+## Installation
 
-### 1. System Prerequisites (RPi5)
+### 1. System prerequisites (RPi5)
 
 ```bash
-# Update system
 sudo apt update && sudo apt upgrade -y
-
-# Install OpenCV dependencies
-sudo apt install -y python3-opencv libopencv-dev
-
-# Install numpy (optimized for ARM)
-sudo apt install -y python3-numpy
-
-# Install pip
-sudo apt install -y python3-pip
+sudo apt install -y python3-opencv libopencv-dev python3-numpy python3-pip
 ```
 
-### 2. Python Dependencies
+### 2. Python dependencies
 
 ```bash
-# Create virtual environment (recommended)
 python3 -m venv venv
 source venv/bin/activate
-
-# Install requirements
 pip install -r requirements.txt
 ```
 
-### 3. Model Files
+### 3. Model files
 
-Place your ONNX model files in the project directory:
-- `Model2_General.onnx` (Anomaly detection model)
-- `Model1_Pothole.onnx` (Pothole detection model)
+Place ONNX weights in `new_model/`:
+- `Model2_General.onnx` — general anomaly detector (FP32)
+- `Model1_Pothole.onnx` — pothole detector (FP32)
+- `Model2_General_quant.onnx` — INT8 quantized general (optional, for EFFICIENCY mode)
+- `Model1_Pothole_quant.onnx` — INT8 quantized pothole (optional, for EFFICIENCY mode)
 
 Update paths in `Source/config.py` if needed.
 
-### 4. Alternative
-Or just run the setup.sh script.
+### 4. Or just run setup
+
+```bash
+bash setup.sh
+```
+
 ---
 
-## 🎮 Usage
+## Usage
 
-### Basic Commands
-
-**Run with camera (dual models):**
 ```bash
+# Live camera — dual model, full pipeline
 python Source/main.py --source camera
-```
 
-**Run with camera (single model):**
-```bash
+# Live camera — single model
 python Source/main.py --source camera --single-model
-```
 
-**Run with video file:**
-```bash
+# Video file
 python Source/main.py --source path/to/video.mp4
-```
 
-**Disable automatic saving:**
-```bash
+# Disable saving
 python Source/main.py --source camera --no-save
-```
 
-**Custom thresholds:**
-```bash
+# Custom thresholds
 python Source/main.py --source camera --conf-threshold 0.6 --save-threshold 0.8
 ```
 
-### Keyboard Controls
+### Keyboard controls
 
-- **`q`** - Quit application
-- **`p`** - Pause/Resume detection
-- **`s`** - Manually save current frame
-
----
-
-## ⚙️ Configuration
-
-Edit `Source/config.py` to customize:
-
-### Model Settings
-```python
-ANOMALY_MODEL_PATH = "new_model/Model2_General.onnx"
-POTHOLE_MODEL_PATH = "new_model/Model1_Pothole.onnx"
-ANOMALY_CONF_THRESHOLD = 0.7
-POTHOLE_CONF_THRESHOLD = 0.7
-```
-
-```
-
-### Output Settings
-```python
-SAVE_DETECTIONS = True
-OUTPUT_DIR = "detections"
-DISPLAY_FPS = True
-SHOW_TIMESTAMPS = True
-```
+| Key | Action |
+|-----|--------|
+| `q` | Quit |
+| `p` | Pause / Resume |
+| `s` | Manually save current frame |
 
 ---
 
-## 🔥 Performance Optimization Tips
+## Configuration (`Source/config.py`)
 
-### 1. Overclock RPi5 (Optional)
+All tunable parameters live here. Nothing is hardcoded elsewhere.
 
-⚠️ **Requires active cooling!**
+### Model paths
+```python
+ANOMALY_MODEL_PATH       = "new_model/Model2_General.onnx"
+POTHOLE_MODEL_PATH       = "new_model/Model1_Pothole.onnx"
+ANOMALY_MODEL_QUANT_PATH = "new_model/Model2_General_quant.onnx"
+POTHOLE_MODEL_QUANT_PATH = "new_model/Model1_Pothole_quant.onnx"
+```
 
-Edit `/boot/firmware/config.txt`:
-```ini
+
+### ONNX Runtime threads (tuned for Pi5 4-core layout)
+```python
+INTRA_OP_NUM_THREADS = 2   # Cores used per ONNX session (Cores 1+2)
+INTER_OP_NUM_THREADS = 1
+NUM_WARMUP_RUNS      = 10  # Dummy inferences to warm caches on session load
+```
+
+
+### ByteTrack settings
+```python
+TRACKER_MAX_LOST_FRAMES     = 15    # Frames before a lost track is purged
+TRACKER_IOU_THRESHOLD       = 0.35  # Min IoU for a valid match
+TRACKER_HIGH_CONF_THRESHOLD = 0.60  # High-confidence detection tier
+TRACKER_LOW_CONF_THRESHOLD  = 0.30  # Low-confidence detection tier
+```
+
+---
+
+## Performance
+
+Measured on RPi5 with active cooling, 640×480 input:
+
+| Configuration | FPS | CPU | Notes |
+|---------------|-----|-----|-------|
+| Single model FP32 (416×416) | 8–10 | ~70% | Stable |
+| Dual alternating FP32 (416×416) | 8–10 | ~75% | One model per frame |
+| Dual alternating INT8 (416×416) | 10–14 | ~65% | EFFICIENCY mode |
+| Overclocked 2.8 GHz + INT8 | 12–16 | ~65% | Requires active cooling |
+| With cv2.imshow | −1 to −2 FPS | +5% | OpenCV GUI overhead |
+
+### Model switch latency
+Switching pairs takes 700 ms – 2 s (dominated by 10 warmup runs × inference time). The 10-second cooldown ensures this only happens when genuinely necessary. Reduce `NUM_WARMUP_RUNS` to 2–3 for faster switches at the cost of slightly slower first frames.
+
+---
+
+## Performance Tuning Tips
+
+### Overclock RPi5 (requires active cooling)
+```bash
+# Edit /boot/firmware/config.txt
 arm_freq=2800
 over_voltage_delta=50000
 ```
-
-Reboot and verify:
 ```bash
-vcgencmd measure_clock arm
+vcgencmd measure_clock arm   # Verify
+vcgencmd measure_temp        # Monitor
 ```
 
-### 2. Monitor Thermals
-
+### Run headless (maximum throughput)
 ```bash
-# Check temperature
-vcgencmd measure_temp
+sudo systemctl set-default multi-user.target && sudo reboot
+# Restore: sudo systemctl set-default graphical.target
+```
 
-# Monitor in real-time
+### Raise process priority
+```bash
+sudo nice -n -10 python Source/main.py --source camera
+```
+
+### Monitor thermals
+```bash
 watch -n 1 vcgencmd measure_temp
+watch -n 1 vcgencmd get_throttled   # 0x0 = no throttle
 ```
-
-Keep temperature below 80°C for optimal performance.
-
-### 3. Reduce GUI Load
-
-For maximum performance, run without desktop environment:
-```bash
-# Disable desktop
-sudo systemctl set-default multi-user.target
-sudo reboot
-
-# Re-enable later if needed
-sudo systemctl set-default graphical.target
-```
-
-### 4. Process Priority
-
-Run with higher priority:
-```bash
-sudo nice -n -10 python main.py --source camera
-```
+Keep below 80 °C. The system will auto-downgrade to EFFICIENCY mode at 75 °C.
 
 ---
 
-## 📊 Performance Benchmarks
+## Output
 
-Expected performance on RPi5 (with active cooling):
-
-| Configuration | FPS | CPU Usage | Notes |
-|--------------|-----|-----------|-------|
-| Single Model (416x416) | 8-10 | ~70% | Stable |
-| Dual Alternating (416x416) | 8-10 | ~75% | Slight overhead |
-| With Display | 8-10 | +5% | OpenCV imshow |
-| Overclocked (2.8GHz) | 10-12 | ~70% | Requires cooling |
-
----
-
-## 📝 Output
-
-### Saved Detections
-
-High-confidence detections (>0.75) are automatically saved to `detections/` with format:
+### Saved detections
+High-confidence frames (> 0.75) saved automatically to `detections/`:
 ```
 ModelName_YYYYMMDD_HHMMSS_microseconds_confidence.jpg
 ```
-
 Example:
 ```
-Anomaly_20260220_143052_123456_0.89.jpg
-Pothole_20260220_143053_789012_0.92.jpg
+Pothole_20260220_143052_123456_0.92.jpg
+Anomaly_20260220_143053_789012_0.87.jpg
 ```
 
-### Console Output
-
+### Console output
 ```
+[Pipeline] Started — CaptureProcess PID 1234, InferenceProcess PID 1235
+[ModelManager] Ready. Default mode: EFFICIENCY | Quantized pair loaded: True
+[InferenceWorker] Started.
 FPS: 9.2 | Frame: 1234 | Detections: 3 | Saved: 45
+[ModelManager] Switched to EFFICIENCY due to: low FPS (3.8 < 4.0)
+[Tracker] Encountered Pothole #3 | Duration: 4.2s | Max Confidence: 0.87
 ```
 
 ---
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
-### Low FPS (<5 FPS)
-
-1. Check CPU throttling:
-   ```bash
-   vcgencmd get_throttled
-   ```
-   If throttled, improve cooling or reduce overclock.
-
-2. Reduce input resolution in `config.py`:
-   ```python
-   CAMERA_WIDTH = 320
-   CAMERA_HEIGHT = 240
-   ```
-
-3. Use single model mode:
-   ```bash
-   python main.py --source camera --single-model
-   ```
-
-### Camera Not Found
-
+### Low FPS (< 5)
 ```bash
-# List available cameras
-v4l2-ctl --list-devices
+vcgencmd get_throttled   # Non-zero = clock is throttled — improve cooling
+```
+- Lower resolution: set `CAMERA_WIDTH=320, CAMERA_HEIGHT=240` in `config.py`
+- Use `--single-model` flag
+- Check that `INTRA_OP_NUM_THREADS=2` — setting to 4 causes sessions to compete for cores
 
-# Test camera
+### Camera not found
+```bash
+v4l2-ctl --list-devices
 raspistill -o test.jpg
 ```
 
-### ONNX Runtime Errors
-
-Ensure you have the correct ONNX Runtime:
+### ONNX Runtime errors
 ```bash
-pip install onnxruntime==1.16.3
+pip uninstall onnxruntime && pip install onnxruntime   # Gets ARM-optimized build
 ```
 
-For ARM optimization:
-```bash
-pip uninstall onnxruntime
-pip install onnxruntime  # Gets ARM-optimized version
-```
+### Memory pressure
+- Set `FRAME_QUEUE_SIZE=1` (already default)
+- Run `--no-save` to disable background saving thread
+- Use `--single-model` to load one ONNX session instead of two
+- Monitor: `free -h` — if < 500 MB free, consider reducing model input size
 
-### Memory Issues
-
-Monitor memory usage:
-```bash
-free -h
-```
-
-If low on memory:
-1. Reduce queue size in `config.py`:
-   ```python
-   FRAME_QUEUE_SIZE = 1
-   ```
-
-2. Disable detection saving:
-   ```bash
-   python main.py --source camera --no-save
-   ```
+### Model switch freezes display
+Normal — inference is paused during `_load_active_pair()`. Reduce `NUM_WARMUP_RUNS` from 10 to 3 in `config.py` to cut switch time from ~1.5 s to ~400 ms.
 
 ---
 
-## 🔬 Advanced: True Multiprocessing
+## Deliverables Checklist
 
-The current implementation uses threading for simplicity. For true multiprocessing (separate CPU cores), you need to:
-
-1. Serialize/deserialize model data
-2. Use `multiprocessing.Queue` for frame passing
-3. Load models in separate processes
-
-See `pipeline.py` for the framework. This requires more complex IPC but can achieve better CPU utilization.
-
----
-
-## 📈 Monitoring Performance
-
-### Real-time Stats
-
-Add to main loop in `main.py`:
-```python
-import psutil
-
-cpu_percent = psutil.cpu_percent(interval=1)
-memory_info = psutil.virtual_memory()
-print(f"CPU: {cpu_percent}% | RAM: {memory_info.percent}%")
-```
-
-### Profiling
-
-```bash
-# Install profiler
-pip install py-spy
-
-# Profile running script
-sudo py-spy top --pid <PID>
-
-# Or run with profiler
-sudo py-spy record -o profile.svg -- python main.py --source camera
-```
+- ✅ FPS displayed on screen — real-time top-left overlay
+- ✅ High-confidence image saving — auto-save when conf > 0.75
+- ✅ Timestamp on saved images — full datetime in filename
+- ✅ Bounding boxes drawn — color-coded by model
+- ✅ Dual model support — alternates to maintain performance
+- ✅ ByteTrack tracking — persistent IDs, re-ID, lifecycle logging
+- ✅ True multiprocessing — 3 OS processes, GIL bypassed
+- ✅ Adaptive model switching — EMA FPS + thermal hysteresis
+- ✅ INT8 quantization tooling — calibration with layer exclusion
+- ✅ Optimized for RPi5 — vectorized ops, NMS, zero-copy, ORT tuning, thread affinity
+- ✅ Low latency — drop-frame queues, latency guard, lazy model loading
 
 ---
 
-## 🎯 Deliverables Checklist
+## Dependencies
 
-- ✅ **FPS displayed on screen** - Real-time in top-left corner
-- ✅ **High-confidence image saving** - Automatic save when conf > 0.75
-- ✅ **Timestamp on saved images** - Filename includes full timestamp
-- ✅ **Bounding boxes drawn** - Color-coded by model type
-- ✅ **Dual model support** - Alternates to maintain performance
-- ✅ **Optimized for RPi5** - Vectorized ops, NMS, zero-copy, warmup
-- ✅ **Low latency** - Frame dropping, small queues, threaded capture
-
----
-
-## 📄 License
-
-MIT License - Feel free to use and modify.
+See `requirements.txt`. Key packages:
+- `onnxruntime` — ARM-optimized inference engine
+- `opencv-python` — NMS, preprocessing, display
+- `numpy` — vectorized pre/postprocessing
+- `picamera2` — CSI camera interface
+- `psutil` — CPU and memory monitoring
 
 ---
 
-**Built for RPi5 with performace and optimization in mind**
+## License
+
+MIT License — free to use and modify.
+
+---
+
+*Built for RPi5 with performance, thermal stability, and real-time reliability in mind.*

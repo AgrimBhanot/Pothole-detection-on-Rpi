@@ -13,7 +13,7 @@ class ThreadedCamera:
         self.frame = None
         
         if src == "pi_camera" or src == 0:
-            print("🚀 Initializing RPi5 CSI Camera via Picamera2...")
+            print("--> Initializing RPi5 CSI Camera via Picamera2...")
             self.picam2 = Picamera2()
             config = self.picam2.create_preview_configuration(
                 main={"size": (width, height), "format": "BGR888"}
@@ -22,7 +22,7 @@ class ThreadedCamera:
             self.picam2.start()
             self.is_pi_cam = True
         else:
-            print(f"🔌 Initializing standard source: {src}")
+            print(f"--> Initializing standard source: {src}")
             self.cap = cv2.VideoCapture(src)
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)

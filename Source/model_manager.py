@@ -49,7 +49,7 @@ class ModelPairManager:
         self._perf_pothole = None
         self._eff_general = None
         self._eff_pothole = None
-        # ── Pair 1 — Performance (FP32) ───────────────────────────────────
+        # ~~ Pair 1 — Performance (FP32) ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # print("[ModelManager] Loading Pair 1 — Performance (FP32)…")
         # self._perf_general = OptimizedYOLODetector(
         #     sys_config.get_anomaly_config(), intra, inter, warmup
@@ -58,7 +58,7 @@ class ModelPairManager:
         #     sys_config.get_pothole_config(), intra, inter, warmup
         # )
 
-        # ── Pair 2 — Efficiency (INT8 quantized) ──────────────────────────
+        # ~~ Pair 2 — Efficiency (INT8 quantized) ~~~~~~~~~~~~~~~~~~~~~~~~~~
         # quant_general_ok = os.path.exists(sys_config.ANOMALY_MODEL_QUANT_PATH)
         # quant_pothole_ok = os.path.exists(sys_config.POTHOLE_MODEL_QUANT_PATH)
 
@@ -84,21 +84,21 @@ class ModelPairManager:
         #     self._eff_pothole = self._perf_pothole
         #     self._quant_available = False
 
-        # ── Mode state ────────────────────────────────────────────────────
+        # ~~ Mode state ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Default to PERFORMANCE so we always start at maximum quality.
         self.current_mode: ModelMode = ModelMode.EFFICIENCY
 
-        # ── EMA FPS smoother ──────────────────────────────────────────────
+        # ~~ EMA FPS smoother ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Initialised at a neutral mid-range value so we don't immediately
         # trigger a mode switch on the first few frames.
         self._ema_fps: float = 15.0
         self._alpha:   float = sys_config.FPS_EMA_ALPHA   # e.g. 0.2
 
-        # ── Thermal sensor ────────────────────────────────────────────────
+        # ~~ Thermal sensor ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         self._temp_path = "/sys/class/thermal/thermal_zone0/temp"
         self._has_temp  = os.path.exists(self._temp_path)
 
-        # ── Hysteresis cooldown ───────────────────────────────────────────
+        # ~~ Hysteresis cooldown ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         self._last_switch: float = 0.0   # monotonic time of last switch
         self._cooldown:    float = sys_config.SWITCH_COOLDOWN_SECONDS
 
@@ -108,7 +108,7 @@ class ModelPairManager:
         )
         self._load_active_pair()
 
-    # ── Public API ────────────────────────────────────────────────────────
+    # ~~ Public API ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     def _load_active_pair(self) -> None:
         self._perf_general = None
@@ -224,7 +224,7 @@ class ModelPairManager:
 
         return False
 
-    # ── Properties for monitoring ─────────────────────────────────────────
+    # ~~ Properties for monitoring ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     @property
     def ema_fps(self) -> float:
