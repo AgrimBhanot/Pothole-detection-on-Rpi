@@ -61,24 +61,6 @@ Runs two YOLO models (general anomaly + pothole) in a true multiprocessing archi
 - **Vectorized pre/postprocessing** — NumPy operations throughout; zero-copy input buffer allocation
 - **`cv2.dnn.NMSBoxes()`** — hardware-accelerated C++ NMS with `conf_threshold=0.70`, `nms_threshold=0.45`
 
-### Camera & Capture
-- **`ThreadedCamera`** — camera read loop runs on a daemon thread; `cam.read()` is always non-blocking, returns the latest frame instantly
-- **`threading.Lock`** — protects `self.frame` between the capture thread and the caller
-- **picamera2 support** — CSI camera initialised inside the capture subprocess (picamera2 requirement post-fork)
-- **Video file fallback** — `VideoCapture` subclass supports any OpenCV-compatible video source
-
-### Performance Monitoring
-- **`PerformanceMonitor`** — rolling 30-sample deque for FPS (current, avg, min, max), inference time (ms), CPU %, RAM %
-- **Temperature** — reads `/sys/class/thermal/thermal_zone0/temp` via sysfs
-- **Throttle detection** — `vcgencmd get_throttled` reports Pi firmware clock-speed reductions
-- **`BackgroundMonitor`** — `psutil.cpu_percent(interval=0.1)` runs on a daemon thread (it blocks for 100 ms per sample); main loop is never stalled
-- **`save_report()`** — writes all metrics to a text file for post-run analysis
-
-### INT8 Quantization Tooling
-- **`Preprocessing.py`** — preprocesses the ONNX model graph before quantization (operator fusion, layout optimization)
-- **`calibrate_and_exculded_Quantization.py`** — runs static INT8 calibration with a calibration dataset; supports per-layer exclusion so sensitive layers (e.g. detection head) can stay in FP32
-- **`image_testing.py`** — validates model accuracy on a set of test images before/after quantization
-
 ### Visualization
 - **`draw_tracks()`** — renders bounding boxes with persistent track IDs and confidence scores
 - **`add_mode_overlay()`** — PERFORMANCE (cyan) / EFFICIENCY (yellow) badge in bottom-right corner
@@ -150,32 +132,7 @@ Runs two YOLO models (general anomaly + pothole) in a true multiprocessing archi
 
 ## Installation
 
-### 1. System prerequisites (RPi5)
-
-```bash
-sudo apt update && sudo apt upgrade -y
-sudo apt install -y python3-opencv libopencv-dev python3-numpy python3-pip
-```
-
-### 2. Python dependencies
-
-```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
-
-### 3. Model files
-
-Place ONNX weights in `new_model/`:
-- `Model2_General.onnx` — general anomaly detector (FP32)
-- `Model1_Pothole.onnx` — pothole detector (FP32)
-- `Model2_General_quant.onnx` — INT8 quantized general (optional, for EFFICIENCY mode)
-- `Model1_Pothole_quant.onnx` — INT8 quantized pothole (optional, for EFFICIENCY mode)
-
-Update paths in `Source/config.py` if needed.
-
-### 4. Or just run setup
+### 1. Just run setup
 
 ```bash
 bash setup.sh
